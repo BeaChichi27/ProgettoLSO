@@ -1,7 +1,9 @@
 #include "tris_server.h"
 #include <string.h>
+#include <stdlib.h>  
 
-extern server_state_t server_state;
+
+
 
 int is_valid_move(const char *board, int position) {
     if (!board || position < 0 || position >= 9) {
@@ -75,14 +77,13 @@ char *format_board(const char *board) {
 void process_move(game_t *game, int player_idx, int position) {
     if (!game || position < 0 || position >= 9) return;
 
-    
     if (!is_valid_move(game->board, position)) {
         send_response(game->players[player_idx]->socket, "ERR Position already taken\n");
         return;
     }
 
     
-    game->board[position] = (player_idx == 0) ? 'X' : 'O';
+    game->board[position] = game->players[player_idx]->symbol;  
 
     
     if (check_winner(game->board)) {
@@ -130,10 +131,10 @@ void notify_game_start(game_t *game) {
 
     char message[256];
     snprintf(message, sizeof(message), 
-             "START %d %s %s\n", 
+             "START %d %s (%c) vs %s (%c)\n",  
              game->game_id,
-             game->players[0]->name,
-             game->players[1]->name);
+             game->players[0]->name, game->players[0]->symbol,
+             game->players[1]->name, game->players[1]->symbol);
 
     send_response(game->players[0]->socket, message);
     send_response(game->players[1]->socket, message);
@@ -145,8 +146,9 @@ void notify_game_end(game_t *game, int winner) {
     char message[256];
     if (winner >= 0 && winner < 2) {
         snprintf(message, sizeof(message), 
-                 "END WIN %s\n", 
-                 game->players[winner]->name);
+                 "END WIN %s (%c)\n",  
+                 game->players[winner]->name, 
+                 game->players[winner]->symbol);
     } else {
         snprintf(message, sizeof(message), "END DRAW\n");
     }
