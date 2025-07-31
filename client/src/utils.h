@@ -2,7 +2,7 @@
 #define UTILS_H
 
 #include "tris_client.h"
-#include <cstddef>
+#include <stddef.h>
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))

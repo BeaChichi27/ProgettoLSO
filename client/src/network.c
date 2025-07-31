@@ -1,5 +1,6 @@
 #include "tris_client.h"
 #include "utils.h"
+#include "protocol.h"
 
 int initialize_client(client_context_t* ctx) {
     if (!ctx) {

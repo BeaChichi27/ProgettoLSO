@@ -28,5 +28,8 @@ int build_message(char* buffer, size_t size, const char* command, const char* da
 void handle_menu_message(client_context_t* ctx, const protocol_message_t* msg);
 void handle_game_message(client_context_t* ctx, const protocol_message_t* msg);
 void handle_lobby_message(client_context_t* ctx, const protocol_message_t* msg);
+void handle_menu_message(client_context_t* ctx, const protocol_message_t* msg);
+void handle_lobby_message(client_context_t* ctx, const protocol_message_t* msg);
+void handle_game_message(client_context_t* ctx, const protocol_message_t* msg);
 
 #endif 
