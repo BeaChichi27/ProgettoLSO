@@ -18,13 +18,8 @@ typedef enum {
     PLAYER_O = 'O'
 } PlayerSymbol;
 
-#ifdef _WIN32
-#include <windows.h>
-typedef CRITICAL_SECTION mutex_t;
-#else
-#include <pthread.h>
-typedef pthread_mutex_t mutex_t;
-#endif
+// Cross-platform mutex definition (già definito in network.h)
+// Usa la definizione di mutex_t dal network.h
 
 typedef struct {
     int game_id;
@@ -38,6 +33,12 @@ typedef struct {
     time_t creation_time;
     mutex_t mutex;
 } Game;
+
+// Cross-platform mutex functions
+int mutex_init(mutex_t *mutex);
+int mutex_lock(mutex_t *mutex);
+int mutex_unlock(mutex_t *mutex);
+int mutex_destroy(mutex_t *mutex);
 
 int game_manager_init();
 void game_manager_cleanup();
