@@ -6,7 +6,9 @@
 #endif
 
 // Cross-platform socket includes
+// Cross-platform socket includes
 #ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #include <windows.h>
@@ -14,6 +16,7 @@
     typedef SOCKET socket_t;
     #define INVALID_SOCKET_VALUE INVALID_SOCKET
     #define SOCKET_ERROR_VALUE SOCKET_ERROR
+    #define SHUT_RDWR SD_BOTH
 #else
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -26,6 +29,7 @@
     #define INVALID_SOCKET_VALUE -1
     #define SOCKET_ERROR_VALUE -1
     #define closesocket close
+    #define SHUT_RDWR SHUT_RDWR
 #endif
 
 #define SERVER_IP "127.0.0.1"

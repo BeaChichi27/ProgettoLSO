@@ -4,13 +4,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Cross-platform includes for implementation
 #ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
     #include <winsock2.h>
     #include <ws2tcpip.h>
 #else
-    #include <sys/time.h>
-    #include <netdb.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <errno.h>
+    #include <fcntl.h>
 #endif
 
 static char last_error[256] = {0};
@@ -200,8 +204,8 @@ int network_send_move(NetworkConnection *conn, int move) {
 }
 
 int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int use_udp) {
-    if (!conn || (use_udp == 0 && conn->tcp_sock == INVALID_SOCKET_VALUE) || 
-        (use_udp == 1 && conn->udp_sock == INVALID_SOCKET_VALUE)) {
+    if (!conn || (use_udp && conn->udp_sock == INVALID_SOCKET_VALUE) || 
+        (!use_udp && conn->tcp_sock == INVALID_SOCKET_VALUE)) {
         set_error("Connessione non valida");
         return -1;
     }
@@ -212,36 +216,34 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
     if (use_udp) {
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        bytes = recvfrom(sock, buffer, buf_size - 1, 0, (struct sockaddr*)&from_addr, &from_len);
+        bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
+                        (struct sockaddr*)&from_addr, &from_len);
     } else {
         bytes = recv(sock, buffer, buf_size - 1, 0);
     }
     
     if (bytes > 0) {
         buffer[bytes] = '\0';
-        if (strstr(buffer, "WAITING_OPPONENT")) {
-            ui_show_waiting_screen();
-        }
     } else if (bytes == 0) {
         set_error("Connessione chiusa dal server");
     } else {
 #ifdef _WIN32
         int error = WSAGetLastError();
-        if (error == WSAETIMEDOUT) {
-            set_error("Timeout nella ricezione");
-        } else {
-            char err_msg[100];
-            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
-            set_error(err_msg);
+        if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
+            // Timeout o nessun dato disponibile (non è un errore grave)
+            return 0;
         }
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
+        set_error(err_msg);
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            set_error("Timeout nella ricezione");
-        } else {
-            char err_msg[100];
-            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
-            set_error(err_msg);
+            // Nessun dato disponibile (non è un errore grave)
+            return 0;
         }
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
+        set_error(err_msg);
 #endif
     }
     
@@ -292,10 +294,11 @@ const char *network_get_error() {
 
 int network_set_nonblocking(socket_t sock) {
 #ifdef _WIN32
-    u_long mode = 1;
-    return ioctlsocket(sock, FIONBIO, &mode);
+    unsigned long mode = 1;
+    return ioctlsocket(sock, FIONBIO, &mode) == 0 ? 0 : -1;
 #else
     int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) return -1;
     return fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 #endif
 }

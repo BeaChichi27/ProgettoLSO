@@ -121,11 +121,21 @@ int game_is_board_full(const Game *game) {
 }
 
 int game_process_network_message(Game *game, const char *message) {
+    if (!game || !message) return 0;
+
     if (strncmp(message, "MOVE:", 5) == 0) {
-        // Formato: "MOVE:<row>,<col>"
+        // Formato: "MOVE:<row>,<col>:<symbol>"
         int row, col;
-        if (sscanf(message + 5, "%d,%d", &row, &col) == 2) {
-            return game_make_move(game, row, col);
+        char symbol;
+        if (sscanf(message + 5, "%d,%d:%c", &row, &col, &symbol) == 3) {
+            if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
+                game->board[row][col] = symbol;
+                game_check_winner(game);
+                if (game->state == GAME_STATE_PLAYING) {
+                    game->current_player = (game->current_player == PLAYER_X) ? PLAYER_O : PLAYER_X;
+                }
+                return 1;
+            }
         }
     }
     else if (strcmp(message, "RESET") == 0) {
@@ -135,6 +145,20 @@ int game_process_network_message(Game *game, const char *message) {
     else if (strcmp(message, "REMATCH") == 0) {
         game->state = GAME_STATE_REMATCH;
         return 1;
+    }
+    else if (strncmp(message, "GAME_OVER:", 10) == 0) {
+        if (strstr(message, "WINNER:")) {
+            char winner;
+            if (sscanf(message, "GAME_OVER:WINNER:%c", &winner) == 1) {
+                game->winner = (PlayerSymbol)winner;
+                game->state = GAME_STATE_OVER;
+                return 1;
+            }
+        } else if (strstr(message, "DRAW")) {
+            game->is_draw = 1;
+            game->state = GAME_STATE_OVER;
+            return 1;
+        }
     }
     
     return 0;
