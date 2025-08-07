@@ -9,26 +9,36 @@ static CRITICAL_SECTION games_mutex;
 static int next_game_id = 1;
 
 int game_manager_init() {
-    InitializeCriticalSection(&games_mutex);
-    EnterCriticalSection(&games_mutex);
+    if (mutex_init(&games_mutex) != 0) return 0;
+    
+    if (mutex_lock(&games_mutex) != 0) return 0;
+    
     for (int i = 0; i < MAX_GAMES; i++) {
         memset(&games[i], 0, sizeof(Game));
         games[i].game_id = -1;
         games[i].state = GAME_STATE_WAITING;
-        InitializeCriticalSection(&games[i].mutex);
+        if (mutex_init(&games[i].mutex) != 0) {
+            mutex_unlock(&games_mutex);
+            return 0;
+        }
     }
-    LeaveCriticalSection(&games_mutex);
+    
+    if (mutex_unlock(&games_mutex) != 0) return 0;
+    
     printf("Game Manager inizializzato\n");
     return 1;
 }
 
 void game_manager_cleanup() {
-    EnterCriticalSection(&games_mutex);
+    if (mutex_lock(&games_mutex) != 0) return;
+    
     for (int i = 0; i < MAX_GAMES; i++) {
-        DeleteCriticalSection(&games[i].mutex);
+        mutex_destroy(&games[i].mutex);
     }
-    LeaveCriticalSection(&games_mutex);
-    DeleteCriticalSection(&games_mutex);
+    
+    mutex_unlock(&games_mutex);
+    mutex_destroy(&games_mutex);
+    
     printf("Game Manager pulito\n");
 }
 
