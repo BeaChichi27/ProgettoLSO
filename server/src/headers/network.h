@@ -72,6 +72,7 @@ thread_return_t THREAD_CALL network_handle_udp_thread(thread_param_t arg);
 int network_platform_init(void);
 void network_platform_cleanup(void);
 int network_set_socket_nonblocking(socket_t sock);
+int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name);
 
 // Cross-platform mutex functions implementation
 #ifdef _WIN32

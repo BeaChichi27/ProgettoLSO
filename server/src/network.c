@@ -292,22 +292,52 @@ int network_start_listening(ServerNetwork *server) {
 
 void network_shutdown(ServerNetwork *server) {
     server->is_running = 0;
-    
+
+    // Chiudi i socket TCP e UDP se validi
     if (server->tcp_socket != INVALID_SOCKET) {
-        closesocket(server->tcp_socket);
+        #ifdef _WIN32
+            closesocket(server->tcp_socket);
+        #else
+            close(server->tcp_socket);
+        #endif
         server->tcp_socket = INVALID_SOCKET;
     }
-    
+
     if (server->udp_socket != INVALID_SOCKET) {
-        closesocket(server->udp_socket);
+        #ifdef _WIN32
+            closesocket(server->udp_socket);
+        #else
+            close(server->udp_socket);
+        #endif
         server->udp_socket = INVALID_SOCKET;
     }
-    
-    WSACleanup();
+
+    // Forza la chiusura dei socket per sbloccare accept/recv
+    if (server->tcp_socket != INVALID_SOCKET) { // Aggiunta controllo
+        #ifdef _WIN32
+            shutdown(server->tcp_socket, SD_BOTH);
+        #else
+            shutdown(server->tcp_socket, SHUT_RDWR);
+        #endif
+    }
+    if (server->udp_socket != INVALID_SOCKET) { // Aggiunta controllo
+        #ifdef _WIN32
+            shutdown(server->udp_socket, SD_BOTH);
+        #else
+            shutdown(server->udp_socket, SHUT_RDWR);
+        #endif
+    }
+
+    shutdown(server->tcp_socket, SHUT_RDWR);
+    shutdown(server->udp_socket, SHUT_RDWR);
+
+    // Pulisci le risorse specifiche di Windows (solo su Windows)
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
+
     printf("Server spento\n");
 }
-
-
 
 Client* network_accept_client(ServerNetwork *server) {
     struct sockaddr_in client_addr;
@@ -341,7 +371,8 @@ Client* network_accept_client(ServerNetwork *server) {
 }
 
 int network_send_to_client(Client *client, const char *message) {
-    if (!client || !client->is_active || !message) {
+    if (!client || !message || strlen(message) == 0 || strlen(message) >= MAX_MSG_SIZE) {
+        LOG_ERROR("Parametri invalidi");
         return 0;
     }
     
@@ -357,6 +388,13 @@ int network_send_to_client(Client *client, const char *message) {
 }
 
 int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
+    #ifdef _WIN32
+        DWORD tv = timeout_ms;
+    #else
+        struct timeval tv = { .tv_sec = timeout_ms / 1000, .tv_usec = (timeout_ms % 1000) * 1000 };
+    #endif
+    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
+
     if (!client || !client->is_active || !buffer) {
         return -1;
     }
@@ -400,5 +438,24 @@ DWORD WINAPI network_handle_client_thread(LPVOID arg) {
     lobby_remove_client(client);
     closesocket(client->client_fd);
     free(client);
+    return 0;
+}
+
+// Modificare create_thread per includere la gestione degli errori
+int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name) {
+#ifdef _WIN32
+    *thread = CreateThread(NULL, 0, start_routine, arg, 0, NULL);
+    if (*thread == NULL) {
+        printf("Errore creazione thread %s: %lu\n", thread_name, GetLastError());
+        return -1;
+    }
+#else
+    if (pthread_create(thread, NULL, start_routine, arg) != 0) {
+        printf("Errore creazione thread %s: %s\n", thread_name, strerror(errno));
+        return -1;
+    }
+    // Imposta nome thread (Linux)
+    pthread_setname_np(*thread, thread_name);
+#endif
     return 0;
 }

@@ -1,6 +1,10 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#ifndef TIMEOUT_SEC
+#define TIMEOUT_SEC 5
+#endif
+
 // Cross-platform socket includes
 #ifdef _WIN32
     #include <winsock2.h>
