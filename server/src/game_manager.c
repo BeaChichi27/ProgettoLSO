@@ -5,7 +5,7 @@
 #include <string.h>
 
 static Game games[MAX_GAMES];
-static CRITICAL_SECTION games_mutex;
+static mutex_t games_mutex;  // CAMBIATO: era CRITICAL_SECTION
 static int next_game_id = 1;
 
 int game_manager_init() {
@@ -43,14 +43,14 @@ void game_manager_cleanup() {
 }
 
 Game* game_find_by_id(int game_id) {
-    EnterCriticalSection(&games_mutex);
+    mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     for (int i = 0; i < MAX_GAMES; i++) {
         if (games[i].game_id == game_id) {
-            LeaveCriticalSection(&games_mutex);
+            mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
             return &games[i];
         }
     }
-    LeaveCriticalSection(&games_mutex);
+    mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
     return NULL;
 }
 
@@ -72,14 +72,15 @@ void game_init_board(Game *game) {
 }
 
 int game_create_new(Client *creator) {
-    games->creation_time = time(NULL);
     if (!creator) return -1;
-    EnterCriticalSection(&games_mutex);
+    
+    mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     Game *game = game_find_free_slot();
     if (!game) {
-        LeaveCriticalSection(&games_mutex);
+        mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
         return -1;
     }
+    
     game->game_id = next_game_id++;
     game->player1 = creator;
     game->player2 = NULL;
@@ -87,10 +88,14 @@ int game_create_new(Client *creator) {
     game->state = GAME_STATE_WAITING;
     game->winner = PLAYER_NONE;
     game->is_draw = 0;
+    game->creation_time = time(NULL);  // AGGIUNTO: era mancante
     game_init_board(game);
+    
     creator->game_id = game->game_id;
     creator->symbol = 'X';
-    LeaveCriticalSection(&games_mutex);
+    
+    mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
+    
     printf("Partita %d creata da %s\n", game->game_id, creator->name);
     return game->game_id;
 }
@@ -99,16 +104,20 @@ int game_join(Client *client, int game_id) {
     if (!client) return 0;
     Game *game = game_find_by_id(game_id);
     if (!game) return 0;
-    EnterCriticalSection(&game->mutex);
+    
+    mutex_lock(&game->mutex);  // CAMBIATO: era EnterCriticalSection
     if (game->state != GAME_STATE_WAITING || !game->player1 || game->player2) {
-        LeaveCriticalSection(&game->mutex);
+        mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
         return 0;
     }
+    
     game->player2 = client;
     game->state = GAME_STATE_PLAYING;
     client->game_id = game_id;
     client->symbol = 'O';
-    LeaveCriticalSection(&game->mutex);
+    
+    mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
+    
     printf("Client %s si e' unito alla partita %d\n", client->name, game_id);
     network_send_to_client(client, "JOIN_ACCEPTED:O");
     network_send_to_client(game->player1, "OPPONENT_JOINED");
@@ -122,7 +131,7 @@ void game_leave(Client *client) {
     Game *game = game_find_by_id(client->game_id);
     if (!game) return;
     
-    EnterCriticalSection(&game->mutex);
+    mutex_lock(&game->mutex);  // CAMBIATO: era EnterCriticalSection
     Client *opponent = NULL;
     if (game->player1 == client) {
         opponent = game->player2;
@@ -142,10 +151,11 @@ void game_leave(Client *client) {
     printf("Partita %d cancellata\n", client->game_id);
     
     client->game_id = -1;
-    LeaveCriticalSection(&game->mutex);
+    mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
 }
 
 int game_check_winner(Game *game) {
+    // Controllo righe
     for (int i = 0; i < 3; i++) {
         if (game->board[i][0] != PLAYER_NONE &&
             game->board[i][0] == game->board[i][1] && 
@@ -153,6 +163,8 @@ int game_check_winner(Game *game) {
             return game->board[i][0];
         }
     }
+    
+    // Controllo colonne
     for (int j = 0; j < 3; j++) {
         if (game->board[0][j] != PLAYER_NONE &&
             game->board[0][j] == game->board[1][j] && 
@@ -160,16 +172,21 @@ int game_check_winner(Game *game) {
             return game->board[0][j];
         }
     }
+    
+    // Controllo diagonale principale
     if (game->board[0][0] != PLAYER_NONE &&
         game->board[0][0] == game->board[1][1] && 
         game->board[1][1] == game->board[2][2]) {
         return game->board[0][0];
     }
+    
+    // Controllo diagonale secondaria
     if (game->board[0][2] != PLAYER_NONE &&
         game->board[0][2] == game->board[1][1] && 
         game->board[1][1] == game->board[2][0]) {
         return game->board[0][2];
     }
+    
     return PLAYER_NONE;
 }
 
@@ -194,19 +211,24 @@ int game_is_valid_move(Game *game, int row, int col) {
 int game_make_move(int game_id, Client *client, int row, int col) {
     Game *game = game_find_by_id(game_id);
     if (!game || !client) return 0;
-    EnterCriticalSection(&game->mutex);
+    
+    mutex_lock(&game->mutex);  // CAMBIATO: era EnterCriticalSection
+    
     PlayerSymbol expected_player = (game->current_player == PLAYER_X) ? PLAYER_X : PLAYER_O;
     if ((char)client->symbol != (char)expected_player) {
         network_send_to_client(client, "ERROR:Non e' il tuo turno");
-        LeaveCriticalSection(&game->mutex);
+        mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
         return 0;
     }
+    
     if (!game_is_valid_move(game, row, col)) {
         network_send_to_client(client, "ERROR:Mossa non valida");
-        LeaveCriticalSection(&game->mutex);
+        mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
         return 0;
     }
+    
     game->board[row][col] = (char)client->symbol;
+    
     PlayerSymbol winner = (PlayerSymbol)game_check_winner(game);
     if (winner != PLAYER_NONE) {
         game->state = GAME_STATE_OVER;
@@ -231,28 +253,33 @@ int game_make_move(int game_id, Client *client, int row, int col) {
         network_send_to_client(game->player1, move_msg);
         network_send_to_client(game->player2, move_msg);
     }
-    LeaveCriticalSection(&game->mutex);
+    
+    mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
     return 1;
 }
 
 void game_reset(int game_id) {
     Game *game = game_find_by_id(game_id);
     if (!game) return;
-    EnterCriticalSection(&game->mutex);
+    
+    mutex_lock(&game->mutex);  // CAMBIATO: era EnterCriticalSection
     game_init_board(game);
     game->current_player = PLAYER_X;
     game->state = GAME_STATE_PLAYING;
     game->winner = PLAYER_NONE;
     game->is_draw = 0;
+    
     network_send_to_client(game->player1, "GAME_RESET");
     network_send_to_client(game->player2, "GAME_RESET");
-    LeaveCriticalSection(&game->mutex);
+    
+    mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
     printf("Partita %d resettata\n", game_id);
 }
 
 void game_list_available(char *response, size_t max_len) {
     strcpy(response, "GAMES:");
-    EnterCriticalSection(&games_mutex);
+    
+    mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     for (int i = 0; i < MAX_GAMES; i++) {
         if (games[i].game_id > 0 && games[i].state == GAME_STATE_WAITING && 
             games[i].player1 && !games[i].player2) {
@@ -263,14 +290,15 @@ void game_list_available(char *response, size_t max_len) {
             }
         }
     }
-    LeaveCriticalSection(&games_mutex);
+    mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
+    
     if (strlen(response) == 6) {
         strcat(response, "Nessuna partita disponibile");
     }
 }
 
 void game_check_timeouts() {
-    EnterCriticalSection(&games_mutex);
+    mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     time_t now = time(NULL);
     
     for (int i = 0; i < MAX_GAMES; i++) {
@@ -286,5 +314,5 @@ void game_check_timeouts() {
             games[i].game_id = -1;
         }
     }
-    LeaveCriticalSection(&games_mutex);
+    mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
 }

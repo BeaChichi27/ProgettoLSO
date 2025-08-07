@@ -200,14 +200,22 @@ int network_send_move(NetworkConnection *conn, int move) {
 }
 
 int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int use_udp) {
-    if (!conn || (use_udp==0 && conn->tcp_sock == INVALID_SOCKET_VALUE) || 
-        (use_udp==1 && conn->udp_sock == INVALID_SOCKET_VALUE)) {
+    if (!conn || (use_udp == 0 && conn->tcp_sock == INVALID_SOCKET_VALUE) || 
+        (use_udp == 1 && conn->udp_sock == INVALID_SOCKET_VALUE)) {
         set_error("Connessione non valida");
         return -1;
     }
 
     socket_t sock = use_udp ? conn->udp_sock : conn->tcp_sock;
-    int bytes = recv(sock, buffer, buf_size - 1, 0);
+    int bytes;
+    
+    if (use_udp) {
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        bytes = recvfrom(sock, buffer, buf_size - 1, 0, (struct sockaddr*)&from_addr, &from_len);
+    } else {
+        bytes = recv(sock, buffer, buf_size - 1, 0);
+    }
     
     if (bytes > 0) {
         buffer[bytes] = '\0';
@@ -222,13 +230,17 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
         if (error == WSAETIMEDOUT) {
             set_error("Timeout nella ricezione");
         } else {
-            set_error("Errore nella ricezione");
+            char err_msg[100];
+            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
+            set_error(err_msg);
         }
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             set_error("Timeout nella ricezione");
         } else {
-            set_error("Errore nella ricezione");
+            char err_msg[100];
+            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
+            set_error(err_msg);
         }
 #endif
     }

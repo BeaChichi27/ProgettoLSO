@@ -1,13 +1,46 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>        
-#include <winsock2.h>
-#include <windows.h>
-#include <conio.h>
+#include <time.h>
+
+// CAMBIATO: Include cross-platform        
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <windows.h>
+    #include <conio.h>
+#else
+    #include <unistd.h>
+    #include <termios.h>
+    #include <sys/select.h>
+#endif
+
 #include "headers/network.h"
 #include "headers/game_logic.h"
 #include "headers/ui.h"
+
+// AGGIUNTO: Funzione cross-platform per input non-blocking
+#ifndef _WIN32
+int kbhit() {
+    struct timeval tv = { 0L, 0L };
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(0, &fds);
+    return select(1, &fds, NULL, NULL, &tv);
+}
+
+int getch() {
+    int r;
+    unsigned char c;
+    if ((r = read(0, &c, sizeof(c))) < 0) {
+        return r;
+    } else {
+        return c;
+    }
+}
+#else
+#define kbhit _kbhit
+#define getch _getch
+#endif
 
 void get_board_position(int move, int* row, int* col) {
     *row = (move - 1) / 3;
@@ -38,19 +71,28 @@ void handle_create_game(NetworkConnection* conn) {
             }
         }
         
-        if (_kbhit() && _getch() == 27) {
-            network_send(conn, "CANCEL", 0);
-            char response[MAX_MSG_SIZE];
-            if (network_receive(conn, response, sizeof(response), 0) > 0) {
-                if (strstr(response, "GAME_CANCELED")) {
-                    ui_show_message("Partita cancellata");
-                    return;
+        // CAMBIATO: Input cross-platform
+        if (kbhit()) {
+            char key = getch();
+            if (key == 27) { // ESC key
+                network_send(conn, "CANCEL", 0);
+                char response[MAX_MSG_SIZE];
+                if (network_receive(conn, response, sizeof(response), 0) > 0) {
+                    if (strstr(response, "GAME_CANCELED")) {
+                        ui_show_message("Partita cancellata");
+                        return;
+                    }
                 }
+                return;
             }
-            return;
         }
         
+        // CAMBIATO: Sleep cross-platform
+#ifdef _WIN32
         Sleep(100);
+#else
+        usleep(100000);
+#endif
     }
 }
 
@@ -68,9 +110,12 @@ void handle_join_game(NetworkConnection* conn) {
     
     printf("Inserisci ID partita (0 per annullare): ");
     char input[10];
-    fgets(input, sizeof(input), stdin);
-    int game_id = atoi(input);
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        ui_show_error("Errore lettura input");
+        return;
+    }
     
+    int game_id = atoi(input);
     if (game_id == 0) return;
     
     char join_msg[20];
@@ -116,8 +161,17 @@ void game_loop(NetworkConnection* conn, Game* game, int is_host) {
             
             if (bytes > 0 && strstr(message, "MOVE:")) {
                 int row, col;
-                sscanf(message, "MOVE:%d,%d", &row, &col);
-                game_make_move(game, row, col);
+                char symbol;
+                if (sscanf(message, "MOVE:%d,%d:%c", &row, &col, &symbol) == 3) {
+                    // Applica la mossa dell'avversario
+                    if (row >= 0 && row < 3 && col >= 0 && col < 3) {
+                        game->board[row][col] = symbol;
+                        game_check_winner(game);
+                        if (game->state == GAME_STATE_PLAYING) {
+                            game->current_player = (game->current_player == PLAYER_X) ? PLAYER_O : PLAYER_X;
+                        }
+                    }
+                }
             }
         }
     }
@@ -142,7 +196,7 @@ int main() {
     char player_name[50];
     if (!ui_get_player_name(player_name, sizeof(player_name))) {
         ui_show_error("Nome non valido");
-        WSACleanup();
+        network_global_cleanup();
         return 1;
     }
 
@@ -151,14 +205,14 @@ int main() {
     
     if (!network_connect_to_server(&conn)) {
         ui_show_error(network_get_error());
-        WSACleanup();
+        network_global_cleanup();
         return 1;
     }
     
     if (!network_register_name(&conn, player_name)) {
         ui_show_error(network_get_error());
         network_disconnect(&conn);
-        WSACleanup();
+        network_global_cleanup();
         return 1;
     }
 
@@ -171,6 +225,7 @@ int main() {
                 {
                     Game game;
                     game_init(&game);
+                    game.state = GAME_STATE_PLAYING; // Imposta stato playing
                     game_loop(&conn, &game, 1);
                     
                     if (ui_ask_rematch()) {
@@ -184,6 +239,7 @@ int main() {
                 {
                     Game game;
                     game_init(&game);
+                    game.state = GAME_STATE_PLAYING; // Imposta stato playing
                     game_loop(&conn, &game, 0);
                     
                     if (ui_ask_rematch()) {
@@ -194,12 +250,12 @@ int main() {
                 
             case 3:
                 network_disconnect(&conn);
-                WSACleanup();
+                network_global_cleanup();
                 return 0;
         }
     }
 
     network_disconnect(&conn);
-    WSACleanup();
+    network_global_cleanup();
     return 0;
 }

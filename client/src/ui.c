@@ -2,11 +2,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <conio.h> 
-#include <windows.h> 
+
+// Include cross-platform
+#ifdef _WIN32
+    #include <conio.h>
+    #define getch _getch
+#else
+    #include <unistd.h>
+    #include <termios.h>
+    
+    // Implementazione getch per Linux
+    int getch() {
+        struct termios old_tio, new_tio;
+        int c;
+        
+        tcgetattr(STDIN_FILENO, &old_tio);
+        new_tio = old_tio;
+        new_tio.c_lflag &= (~ICANON & ~ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
+        
+        c = getchar();
+        
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
+        return c;
+    }
+#endif
 
 void ui_clear_screen() {
+#ifdef _WIN32
     system("cls");
+#else
+    system("clear");
+#endif
 }
 
 int ui_show_main_menu() {
@@ -20,7 +47,7 @@ int ui_show_main_menu() {
 
     int choice = 0;
     while (1) {
-        char input = _getch();
+        char input = getch();
         if (input >= '1' && input <= '3') {
             choice = input - '0';
             printf("%d\n", choice);
@@ -46,7 +73,7 @@ int ui_get_player_move() {
     printf("Scegli una cella (1-9) o 0 per uscire: ");
     
     while (1) {
-        char input = _getch();
+        char input = getch();
         if (input == '0') {
             printf("0\n");
             return 0;
@@ -61,20 +88,20 @@ int ui_get_player_move() {
 void ui_show_message(const char *message) {
     printf("\n%s\n", message);
     printf("Premi un tasto per continuare...");
-    _getch();
+    getch();
 }
 
 void ui_show_error(const char *error) {
     printf("\nERRORE: %s\n", error);
     printf("Premi un tasto per continuare...");
-    _getch();
+    getch();
 }
 
 int ui_ask_rematch() {
     printf("\nVuoi fare una rivincita? (s/n): ");
     
     while (1) {
-        char input = _getch();
+        char input = getch();
         if (input == 's' || input == 'S') {
             printf("s\n");
             return 1;
