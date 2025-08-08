@@ -497,28 +497,49 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
         return -1;
     }
     
-    // Timeout per la ricezione
+    // Timeout per la ricezione (60 secondi invece di 5)
 #ifdef _WIN32
-    DWORD timeout_ms = 5000;
-    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms));
+    DWORD timeout_ms = 60000;  // 60 secondi in millisecondi
+    if (setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR_VALUE) {
+        printf("Errore impostazione timeout ricezione: %d\n", WSAGetLastError());
+        return -1;
+    }
 #else
-    struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
-    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    struct timeval timeout = { .tv_sec = 60, .tv_usec = 0 };  // 60 secondi
+    if (setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        printf("Errore impostazione timeout ricezione: %s\n", strerror(errno));
+        return -1;
+    }
 #endif
     
     int bytes = recv(client->client_fd, buffer, (int)buf_size - 1, 0);
     if (bytes <= 0) {
         if (bytes == 0) {
-            printf("Client %s (FD:%d) si è disconnesso correttamente\n", client->name, (int)client->client_fd);
+            printf("Client %s (FD:%d) si è disconnesso normalmente\n", client->name, (int)client->client_fd);
         } else {
 #ifdef _WIN32
             int error = WSAGetLastError();
-            if (error != WSAETIMEDOUT) {
-                printf("Errore ricezione da %s (FD:%d): %d\n", client->name, (int)client->client_fd, error);
+            printf("Errore ricezione da %s (FD:%d): %d", client->name, (int)client->client_fd, error);
+            
+            // Log aggiuntivo per debug
+            if (error == WSAECONNRESET) {
+                printf(" (Connessione resettata dal client)\n");
+            } else if (error == WSAETIMEDOUT) {
+                printf(" (Timeout ricezione scattato)\n");
+            } else {
+                printf("\n");
             }
 #else
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                printf("Errore ricezione da %s (FD:%d): %s\n", client->name, (int)client->client_fd, strerror(errno));
+            printf("Errore ricezione da %s (FD:%d): %s (errno: %d)", 
+                  client->name, (int)client->client_fd, strerror(errno), errno);
+            
+            // Log aggiuntivo per debug
+            if (errno == ECONNRESET) {
+                printf(" (Connessione resettata dal client)\n");
+            } else if (errno == ETIMEDOUT) {
+                printf(" (Timeout ricezione scattato)\n");
+            } else {
+                printf("\n");
             }
 #endif
         }
@@ -529,77 +550,6 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     buffer[bytes] = '\0';
     printf("TCP <- %s: %s\n", client->name, buffer);
     return bytes;
-}
-
-#ifdef _WIN32
-thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
-#else  
-thread_return_t network_handle_client_thread(thread_param_t arg) {
-#endif
-    Client *client = (Client*)arg;
-    char buffer[MAX_MSG_SIZE];
-    
-    printf("Thread avviato per client FD:%d\n", (int)client->client_fd);
-    
-    // Invia un messaggio di benvenuto al client
-    network_send_to_client(client, "Benvenuto al server Tris! Per favore registrati con: REGISTER:<tuonome>");
-
-    if (!lobby_add_client_reference(client)) {
-        printf("ERRORE: Impossibile aggiungere client alla lobby (lobby piena?)\n");
-        closesocket(client->client_fd);
-        free(client);
-#ifdef _WIN32
-        return 0;
-#else
-        return NULL;
-#endif
-    }
-    
-    printf("Client FD:%d aggiunto alla lobby\n", (int)client->client_fd);
-    
-    // Aggiungi un timeout per la registrazione
-    time_t start_time = time(NULL);
-    int registered = 0;
-    
-    while (client->is_active && global_server && global_server->is_running) {
-        // Timeout dopo 30 secondi se non registrato
-        if (!registered && difftime(time(NULL), start_time) > 30) {
-            printf("Timeout registrazione per client FD:%d\n", (int)client->client_fd);
-            network_send_to_client(client, "ERROR:Timeout registrazione. Disconnessione.");
-            break;
-        }
-        
-        int bytes = network_receive_from_client(client, buffer, sizeof(buffer));
-        if (bytes <= 0) {
-            printf("Connessione persa con client %s (FD:%d)\n", client->name, (int)client->client_fd);
-            break;
-        }
-        
-        // Controlla se il client si è registrato
-        if (!registered && strncmp(buffer, "REGISTER:", 9) != 0) {
-            network_send_to_client(client, "ERROR:Devi prima registrarti con REGISTER:<nome>");
-            continue;
-        }
-        
-        lobby_handle_client_message(client, buffer);
-        
-        // Se il messaggio era una registrazione, segnalo che è registrato
-        if (strncmp(buffer, "REGISTER:", 9) == 0) {
-            registered = 1;
-        }
-    }
-    
-    printf("Rimuovendo client %s (FD:%d) dalla lobby...\n", client->name, (int)client->client_fd);
-    lobby_remove_client(client);
-    closesocket(client->client_fd);
-    free(client);
-    printf("Client rimosso e memoria liberata\n");
-    
-#ifdef _WIN32
-    return 0;
-#else
-    return NULL;
-#endif
 }
 
 int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name) {

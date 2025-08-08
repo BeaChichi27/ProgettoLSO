@@ -151,14 +151,20 @@ int network_register_name(NetworkConnection *conn, const char *name) {
     }
     response[bytes] = '\0';
 
-    if (strstr(response, "OK") != NULL) {
-        strncpy(conn->player_name, name, sizeof(conn->player_name) - 1);
-        conn->player_name[sizeof(conn->player_name) - 1] = '\0';
-        return 1;
-    } else {
-        set_error(response);
+    // Modifica qui: gestisci meglio la risposta
+    if (strstr(response, "OK") == NULL && strstr(response, "ERROR") != NULL) {
+        set_error(response); // Mostra l'errore del server
         return 0;
     }
+
+    if (network_set_timeout(conn->tcp_sock, 60) != 0) {
+        set_error("Impossibile impostare timeout connessione");
+        return 0;
+    }
+    
+    strncpy(conn->player_name, name, sizeof(conn->player_name) - 1);
+    conn->player_name[sizeof(conn->player_name) - 1] = '\0';
+    return 1;
 }
 
 int network_create_game(NetworkConnection *conn) {

@@ -75,7 +75,14 @@ Client* lobby_add_client(socket_t client_fd, const char *name) {  // CAMBIATO: e
 void lobby_remove_client(Client *client) {
     if (!client) return;
     
-    mutex_lock(&lobby_mutex);  // CAMBIATO: era EnterCriticalSection
+    mutex_lock(&lobby_mutex);
+    
+    // Notifica il client prima di rimuoverlo
+    if (client->is_active) {
+        network_send_to_client(client, "SERVER_DISCONNECT");
+        shutdown(client->client_fd, SHUT_RDWR);
+    }
+    
     game_leave(client);
     
     for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -84,7 +91,7 @@ void lobby_remove_client(Client *client) {
             break;
         }
     }
-    mutex_unlock(&lobby_mutex);  // CAMBIATO: era LeaveCriticalSection
+    mutex_unlock(&lobby_mutex);
     
     printf("Client %s rimosso dalla lobby\n", client->name);
 }
@@ -127,6 +134,43 @@ void lobby_broadcast_message(const char *message, Client *exclude) {
         }
     }
     mutex_unlock(&lobby_mutex);  // CAMBIATO: era LeaveCriticalSection
+}
+
+void lobby_handle_create_game(Client *client) {
+    if (!client) return;
+
+    printf("Client %s richiede creazione partita\n", client->name);
+    
+    int game_id = game_create_new(client);
+    if (game_id > 0) {
+        char response[64];
+        sprintf(response, "GAME_CREATED:%d", game_id);
+        network_send_to_client(client, response);
+        
+        // Invia periodicamente stato attesa
+        time_t start = time(NULL);
+        while (difftime(time(NULL), start) < 300) { // Timeout dopo 5 minuti
+            Game* game = game_find_by_id(game_id);
+            if (!game || game->player2 != NULL) break;
+            
+            network_send_to_client(client, "WAITING:In attesa di avversario...");
+            sleep(5); // Invia aggiornamento ogni 5 secondi
+            
+            // Controlla se il client è ancora connesso
+            if (!network_send_to_client(client, "PING")) {
+                printf("Client %s disconnesso durante l'attesa\n", client->name);
+                game_leave(client);
+                return;
+            }
+        }
+        
+        if (!game_find_by_id(game_id) || !game_find_by_id(game_id)->player2) {
+            network_send_to_client(client, "ERROR:Timeout ricerca avversario");
+            game_leave(client);
+        }
+    } else {
+        network_send_to_client(client, "ERROR:Impossibile creare partita");
+    }
 }
 
 void lobby_handle_client_message(Client *client, const char *message) {

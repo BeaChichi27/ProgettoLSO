@@ -43,14 +43,17 @@ void handle_create_game(NetworkConnection* conn) {
 
     ui_show_waiting_screen();
     time_t start_time = time(NULL);
+    int received_pong = 1;
     
     while (keep_running) {
-        if (difftime(time(NULL), start_time) > 30) {
+        // Controlla timeout
+        if (difftime(time(NULL), start_time) > 300) { // 5 minuti
             ui_show_message("Timeout: nessun avversario trovato");
             network_send(conn, "CANCEL", 0);
             return;
         }
         
+        // Ricevi messaggi dal server
         char message[MAX_MSG_SIZE];
         int bytes = network_receive(conn, message, sizeof(message), 0);
         
@@ -58,37 +61,31 @@ void handle_create_game(NetworkConnection* conn) {
             if (strstr(message, "OPPONENT_JOINED")) {
                 ui_show_message("Avversario trovato! La partita inizia...");
                 return;
-            } else if (strstr(message, "SERVER_DOWN")) {
-                ui_show_error("Il server si è disconnesso");
-                keep_running = 0;
-                return;
             }
-        } else if (bytes < 0) {
-            ui_show_error(network_get_error());
+            else if (strstr(message, "WAITING:")) {
+                // Aggiorna schermata di attesa
+                ui_show_waiting_screen_with_message(message + 8);
+            }
+            else if (strcmp(message, "PING") == 0) {
+                network_send(conn, "PONG", 0);
+            }
+        }
+        else if (bytes < 0) {
+            ui_show_error("Connessione con il server interrotta");
             keep_running = 0;
             return;
         }
         
+        // Controlla input utente
         if (kbhit()) {
-            char key = getch();
-            if (key == 27) { // ESC key
+            int key = getch();
+            if (key == 27) { // ESC
                 network_send(conn, "CANCEL", 0);
-                char response[MAX_MSG_SIZE];
-                if (network_receive(conn, response, sizeof(response), 0) > 0) {
-                    if (strstr(response, "GAME_CANCELED")) {
-                        ui_show_message("Partita cancellata");
-                        return;
-                    }
-                }
                 return;
             }
         }
         
-#ifdef _WIN32
-        Sleep(100);
-#else
-        sleep(100000);
-#endif
+        sleep(1); // Riduci il carico sulla CPU
     }
 }
 
@@ -134,6 +131,15 @@ void game_loop(NetworkConnection* conn, Game* game, int is_host) {
     while (keep_running && game->state != GAME_STATE_OVER) {
         ui_show_board(game->board);
         
+        char message[MAX_MSG_SIZE];
+        int bytes = network_receive(conn, message, sizeof(message), 1);
+        
+        if (bytes > 0 && strstr(message, "SERVER_DISCONNECT")) {
+            ui_show_error("Il server ti ha disconnesso");
+            keep_running = 0;
+            break;
+        }
+
         if ((is_host && game->current_player == PLAYER_X) || 
             (!is_host && game->current_player == PLAYER_O)) {
             int move = ui_get_player_move();
@@ -159,7 +165,6 @@ void game_loop(NetworkConnection* conn, Game* game, int is_host) {
         } else {
             ui_show_message("Aspettando mossa avversario... (ESC per uscire)");
             
-            char message[MAX_MSG_SIZE];
             int bytes = network_receive(conn, message, sizeof(message), 1);
             
             if (bytes == 0) {
@@ -242,6 +247,11 @@ int main() {
         network_global_cleanup();
         return 1;
     }
+
+    // Aggiungi questo per assicurarti che la registrazione sia andata a buon fine
+    ui_clear_screen();
+    printf("\nRegistrazione completata come %s\n", player_name);
+    sleep(1); // Breve pausa per leggere il messaggio
 
     while (keep_running) {  // Modificato da while(1)
         int choice = ui_show_main_menu();
