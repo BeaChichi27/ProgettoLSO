@@ -34,11 +34,38 @@ typedef struct {
     mutex_t mutex;
 } Game;
 
-// Cross-platform mutex functions
-int mutex_init(mutex_t *mutex);
-int mutex_lock(mutex_t *mutex);
-int mutex_unlock(mutex_t *mutex);
-int mutex_destroy(mutex_t *mutex);
+// Cross-platform mutex functions implementation
+#ifdef _WIN32
+    int mutex_init(mutex_t *mutex) { 
+        InitializeCriticalSection(mutex); 
+        return 0; 
+    }
+    int mutex_lock(mutex_t *mutex) { 
+        EnterCriticalSection(mutex); 
+        return 0; 
+    }
+    int mutex_unlock(mutex_t *mutex) { 
+        LeaveCriticalSection(mutex); 
+        return 0; 
+    }
+    int mutex_destroy(mutex_t *mutex) { 
+        DeleteCriticalSection(mutex); 
+        return 0; 
+    }
+#else
+    int mutex_init(mutex_t *mutex) { 
+        return pthread_mutex_init(mutex, NULL); 
+    }
+    int mutex_lock(mutex_t *mutex) { 
+        return pthread_mutex_lock(mutex); 
+    }
+    int mutex_unlock(mutex_t *mutex) { 
+        return pthread_mutex_unlock(mutex); 
+    }
+    int mutex_destroy(mutex_t *mutex) { 
+        return pthread_mutex_destroy(mutex); 
+    }
+#endif
 
 int game_manager_init();
 void game_manager_cleanup();

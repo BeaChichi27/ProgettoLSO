@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <pthread.h>
 
 // CAMBIATO: Include cross-platform
 #ifdef _WIN32

@@ -8,6 +8,42 @@ static Game games[MAX_GAMES];
 static mutex_t games_mutex;  // CAMBIATO: era CRITICAL_SECTION
 static int next_game_id = 1;
 
+int mutex_init(mutex_t *mutex) {
+    #ifdef _WIN32
+        InitializeCriticalSection(&mutex->win_mutex);
+        return 0;
+    #else
+        return pthread_mutex_init(&mutex->nix_mutex, NULL);
+    #endif
+}
+
+int mutex_lock(mutex_t *mutex) {
+    #ifdef _WIN32
+        EnterCriticalSection(&mutex->win_mutex);
+        return 0;
+    #else
+        return pthread_mutex_lock(&mutex->nix_mutex);
+    #endif
+}
+
+int mutex_unlock(mutex_t *mutex) {
+    #ifdef _WIN32
+        LeaveCriticalSection(&mutex->win_mutex);
+        return 0;
+    #else
+        return pthread_mutex_unlock(&mutex->nix_mutex);
+    #endif
+}
+
+int mutex_destroy(mutex_t *mutex) {
+    #ifdef _WIN32
+        DeleteCriticalSection(&mutex->win_mutex);
+        return 0;
+    #else
+        return pthread_mutex_destroy(&mutex->nix_mutex);
+    #endif
+}
+
 int game_manager_init() {
     if (mutex_init(&games_mutex) != 0) return 0;
     

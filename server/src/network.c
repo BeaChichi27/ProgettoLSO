@@ -483,7 +483,8 @@ int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)
         printf("Errore creazione thread %s: %s\n", thread_name, strerror(errno));
         return -1;
     }
-    pthread_setname_np(*thread, thread_name);
+    // Correzione: Imposta il tipo di cancellazione del thread
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL); // o PTHREAD_CANCEL_DEFERRED
 #endif
     return 0;
 }
