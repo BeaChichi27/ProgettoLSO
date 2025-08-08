@@ -19,7 +19,9 @@
 #else
     #include <sys/socket.h>
     #include <netinet/in.h>
+    #include <netinet/tcp.h>  // AGGIUNTO: per TCP_NODELAY
     #include <arpa/inet.h>
+    #include <netdb.h>        // AGGIUNTO: per gethostbyname
     #include <pthread.h>
     #include <unistd.h>
     #include <errno.h>
@@ -39,6 +41,7 @@
 #define SERVER_PORT 8080
 #define MAX_MSG_SIZE 1024
 #define MAX_NAME_LEN 50
+#define MAX_CLIENTS 100
 
 typedef struct {
     socket_t client_fd;
@@ -73,5 +76,9 @@ int network_platform_init(void);
 void network_platform_cleanup(void);
 int network_set_socket_nonblocking(socket_t sock);
 int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name);
+
+// Utility functions
+const char* get_socket_error(void);
+void print_server_info(void);
 
 #endif

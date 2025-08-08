@@ -5,10 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// AGGIUNTO: Definizione macro mancante
 #define LOG_ERROR(msg) printf("ERROR: %s\n", msg)
 
-// AGGIUNTO: Implementazione funzione mancante
 const char* get_socket_error() {
 #ifdef _WIN32
     static char buffer[256];
@@ -21,6 +19,32 @@ const char* get_socket_error() {
 }
 
 static ServerNetwork *global_server = NULL;
+
+// Funzione per ottenere l'IP locale del server
+void print_server_info() {
+    printf("=== INFORMAZIONI SERVER ===\n");
+    printf("Porta: %d\n", SERVER_PORT);
+    
+#ifdef _WIN32
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        printf("Hostname: %s\n", hostname);
+        
+        struct hostent *host_info = gethostbyname(hostname);
+        if (host_info != NULL) {
+            for (int i = 0; host_info->h_addr_list[i] != NULL; i++) {
+                struct in_addr addr;
+                memcpy(&addr, host_info->h_addr_list[i], sizeof(struct in_addr));
+                printf("IP locale: %s\n", inet_ntoa(addr));
+            }
+        }
+    }
+#else
+    // Per Linux, stampa le informazioni di rete
+    system("hostname -I 2>/dev/null | head -n1 | tr ' ' '\\n' | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$' | head -n1");
+#endif
+    printf("===========================\n\n");
+}
 
 static int network_register_udp_client(Client *client, struct sockaddr_in *udp_addr) {
     if (!client || !udp_addr) return 0;
@@ -38,19 +62,19 @@ static Client* network_find_client_by_udp_addr(struct sockaddr_in *addr) {
     if (!addr) return NULL;
     
     mutex_t* mutex = lobby_get_mutex();
-    mutex_lock(mutex);  // CAMBIATO: era EnterCriticalSection
+    mutex_lock(mutex);
     
     for (int i = 0; i < MAX_CLIENTS; i++) {
         Client *client = lobby_get_client_by_index(i); 
         if (client && 
             client->udp_addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
             client->udp_addr.sin_port == addr->sin_port) {
-            mutex_unlock(mutex);  // CAMBIATO: era LeaveCriticalSection
+            mutex_unlock(mutex);
             return client;
         }
     }
     
-    mutex_unlock(mutex);  // CAMBIATO: era LeaveCriticalSection
+    mutex_unlock(mutex);
     return NULL;
 }
 
@@ -60,7 +84,7 @@ static int network_send_udp_response(ServerNetwork *server, struct sockaddr_in *
     int bytes_sent = sendto(server->udp_socket, message, (int)strlen(message), 0,
                            (struct sockaddr*)client_addr, sizeof(*client_addr));
     
-    if (bytes_sent == SOCKET_ERROR_VALUE) {  // CAMBIATO: era SOCKET_ERROR
+    if (bytes_sent == SOCKET_ERROR_VALUE) {
 #ifdef _WIN32
         printf("Errore invio UDP: %d\n", WSAGetLastError());
 #else
@@ -233,6 +257,7 @@ int network_init(ServerNetwork *server) {
 
     memset(server, 0, sizeof(ServerNetwork));
     
+    // Crea socket TCP
     server->tcp_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server->tcp_socket == INVALID_SOCKET_VALUE) {
         printf("Errore creazione socket TCP: %s\n", get_socket_error());
@@ -242,6 +267,7 @@ int network_init(ServerNetwork *server) {
         return 0;
     }
     
+    // Crea socket UDP
     server->udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (server->udp_socket == INVALID_SOCKET_VALUE) {
         printf("Errore creazione socket UDP: %s\n", get_socket_error());
@@ -252,54 +278,89 @@ int network_init(ServerNetwork *server) {
         return 0;
     }
     
+    // Configurazione indirizzo server
     memset(&server->server_addr, 0, sizeof(server->server_addr));
     server->server_addr.sin_family = AF_INET;
-    server->server_addr.sin_addr.s_addr = INADDR_ANY;
+    server->server_addr.sin_addr.s_addr = INADDR_ANY; // Ascolta su tutte le interfacce di rete
     server->server_addr.sin_port = htons(SERVER_PORT);
     
+    // Configura opzioni socket
 #ifdef _WIN32
     BOOL opt = TRUE;
-    setsockopt(server->tcp_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
-    setsockopt(server->udp_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+    if (setsockopt(server->tcp_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt)) == SOCKET_ERROR_VALUE) {
+        printf("Errore setsockopt TCP SO_REUSEADDR: %s\n", get_socket_error());
+    }
+    if (setsockopt(server->udp_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt)) == SOCKET_ERROR_VALUE) {
+        printf("Errore setsockopt UDP SO_REUSEADDR: %s\n", get_socket_error());
+    }
     
+    // Timeout per UDP
     DWORD timeout = 1000; 
     setsockopt(server->udp_socket, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
+    
+    // Disabilita algoritmo di Nagle per TCP (migliori prestazioni per piccoli pacchetti)
+    BOOL no_delay = TRUE;
+    setsockopt(server->tcp_socket, IPPROTO_TCP, TCP_NODELAY, (char*)&no_delay, sizeof(no_delay));
 #else
     int opt = 1;
-    setsockopt(server->tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    setsockopt(server->udp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(server->tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        printf("Errore setsockopt TCP SO_REUSEADDR: %s\n", strerror(errno));
+    }
+    if (setsockopt(server->udp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        printf("Errore setsockopt UDP SO_REUSEADDR: %s\n", strerror(errno));
+    }
     
+    // Timeout per UDP
     struct timeval timeout;
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
     setsockopt(server->udp_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    
+    // Disabilita algoritmo di Nagle per TCP
+    int no_delay = 1;
+    setsockopt(server->tcp_socket, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay));
 #endif
     
     global_server = server;
+    printf("Network inizializzato correttamente\n");
     return 1;
 }
 
 int network_start_listening(ServerNetwork *server) {
+    // Bind TCP
     if (bind(server->tcp_socket, (struct sockaddr*)&server->server_addr, 
              sizeof(server->server_addr)) == SOCKET_ERROR_VALUE) {
-        printf("Errore bind TCP: %s\n", get_socket_error());
+        printf("Errore bind TCP sulla porta %d: %s\n", SERVER_PORT, get_socket_error());
+        printf("Possibili cause:\n");
+        printf("- Porta già in uso da un altro processo\n");
+        printf("- Permessi insufficienti (provare con sudo su Linux)\n");
+        printf("- Firewall che blocca la porta\n");
         return 0;
     }
+    printf("TCP bind riuscito sulla porta %d\n", SERVER_PORT);
     
+    // Bind UDP
     if (bind(server->udp_socket, (struct sockaddr*)&server->server_addr, 
              sizeof(server->server_addr)) == SOCKET_ERROR_VALUE) {
-        printf("Errore bind UDP: %s\n", get_socket_error());
+        printf("Errore bind UDP sulla porta %d: %s\n", SERVER_PORT, get_socket_error());
         return 0;
     }
+    printf("UDP bind riuscito sulla porta %d\n", SERVER_PORT);
     
+    // Avvia listening TCP
     if (listen(server->tcp_socket, SOMAXCONN) == SOCKET_ERROR_VALUE) {
         printf("Errore listen TCP: %s\n", get_socket_error());
         return 0;
     }
     
     server->is_running = 1;
-    printf("Server in ascolto sulla porta %d (TCP e UDP)\n", SERVER_PORT);
     
+    // Stampa informazioni del server
+    print_server_info();
+    printf("Server pronto per connessioni TCP e UDP\n");
+    printf("IMPORTANTE: Assicurati che il firewall permetta connessioni sulla porta %d\n\n", SERVER_PORT);
+    
+    // Crea thread UDP
 #ifdef _WIN32
     HANDLE udp_thread = CreateThread(NULL, 0, network_handle_udp_thread, server, 0, NULL);
     if (udp_thread == NULL) {
@@ -320,6 +381,7 @@ int network_start_listening(ServerNetwork *server) {
 }
 
 void network_shutdown(ServerNetwork *server) {
+    printf("Iniziando spegnimento server...\n");
     server->is_running = 0;
 
     if (server->tcp_socket != INVALID_SOCKET_VALUE) {
@@ -330,6 +392,7 @@ void network_shutdown(ServerNetwork *server) {
 #endif
         closesocket(server->tcp_socket);
         server->tcp_socket = INVALID_SOCKET_VALUE;
+        printf("Socket TCP chiuso\n");
     }
 
     if (server->udp_socket != INVALID_SOCKET_VALUE) {
@@ -340,13 +403,14 @@ void network_shutdown(ServerNetwork *server) {
 #endif
         closesocket(server->udp_socket);
         server->udp_socket = INVALID_SOCKET_VALUE;
+        printf("Socket UDP chiuso\n");
     }
 
 #ifdef _WIN32
     WSACleanup();
 #endif
 
-    printf("Server spento\n");
+    printf("Server spento completamente\n");
 }
 
 Client* network_accept_client(ServerNetwork *server) {
@@ -357,22 +421,28 @@ Client* network_accept_client(ServerNetwork *server) {
     if (client_fd == INVALID_SOCKET_VALUE) {
 #ifdef _WIN32
         int error = WSAGetLastError();
-        if (error != WSAEINTR && server->is_running) {
+        if (error != WSAEINTR && error != WSAECONNABORTED && server->is_running) {
             printf("Errore accept: %d\n", error);
         }
 #else
-        if (errno != EINTR && server->is_running) {
+        if (errno != EINTR && errno != ECONNABORTED && server->is_running) {
             printf("Errore accept: %s\n", strerror(errno));
         }
 #endif
         return NULL;
     }
     
-    printf("Nuova connessione TCP da %s:%d\n", 
-           inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    // Informazioni dettagliate sulla connessione
+    printf("\n=== NUOVA CONNESSIONE ===\n");
+    printf("IP remoto: %s\n", inet_ntoa(client_addr.sin_addr));
+    printf("Porta remota: %d\n", ntohs(client_addr.sin_port));
+    printf("Socket FD: %d\n", (int)client_fd);
+    printf("========================\n");
     
+    // Crea struttura client
     Client *client = (Client*)malloc(sizeof(Client));
     if (!client) {
+        printf("Errore allocazione memoria per client\n");
         closesocket(client_fd);
         return NULL;
     }
@@ -383,53 +453,81 @@ Client* network_accept_client(ServerNetwork *server) {
     client->game_id = -1;
     strcpy(client->name, "Unknown");
     
+    // Configura socket client per migliori prestazioni
+#ifdef _WIN32
+    BOOL no_delay = TRUE;
+    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, (char*)&no_delay, sizeof(no_delay));
+#else
+    int no_delay = 1;
+    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay));
+#endif
+    
     return client;
 }
 
 int network_send_to_client(Client *client, const char *message) {
     if (!client || !message || strlen(message) == 0 || strlen(message) >= MAX_MSG_SIZE) {
-        LOG_ERROR("Parametri invalidi");
+        LOG_ERROR("network_send_to_client: Parametri invalidi");
+        return 0;
+    }
+    
+    if (!client->is_active) {
+        printf("Tentativo di invio a client inattivo: %s\n", client->name);
         return 0;
     }
     
     int bytes_sent = send(client->client_fd, message, (int)strlen(message), 0);
     if (bytes_sent == SOCKET_ERROR_VALUE) {
-        printf("Errore invio messaggio TCP: %s\n", get_socket_error());
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        printf("Errore invio messaggio TCP a %s (FD:%d): %d\n", client->name, (int)client->client_fd, error);
+#else
+        printf("Errore invio messaggio TCP a %s (FD:%d): %s\n", client->name, (int)client->client_fd, strerror(errno));
+#endif
         client->is_active = 0;
         return 0;
     }
     
-    printf("TCP inviato a %s: %s\n", client->name, message);
+    printf("TCP -> %s: %s\n", client->name, message);
     return 1;
 }
 
 int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
-    const int timeout_ms = 5000; // AGGIUNTO: era mancante
-    
-#ifdef _WIN32
-    DWORD tv = timeout_ms;
-#else
-    struct timeval tv = { .tv_sec = timeout_ms / 1000, .tv_usec = (timeout_ms % 1000) * 1000 };
-#endif
-    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
-
     if (!client || !client->is_active || !buffer) {
         return -1;
     }
     
+    // Timeout per la ricezione
+#ifdef _WIN32
+    DWORD timeout_ms = 5000;
+    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms));
+#else
+    struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif
+    
     int bytes = recv(client->client_fd, buffer, (int)buf_size - 1, 0);
     if (bytes <= 0) {
         if (bytes == 0) {
-            printf("Client %s disconnesso\n", client->name);
+            printf("Client %s (FD:%d) si è disconnesso correttamente\n", client->name, (int)client->client_fd);
         } else {
-            printf("Errore ricezione messaggio: %s\n", get_socket_error());
+#ifdef _WIN32
+            int error = WSAGetLastError();
+            if (error != WSAETIMEDOUT) {
+                printf("Errore ricezione da %s (FD:%d): %d\n", client->name, (int)client->client_fd, error);
+            }
+#else
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                printf("Errore ricezione da %s (FD:%d): %s\n", client->name, (int)client->client_fd, strerror(errno));
+            }
+#endif
         }
         client->is_active = 0;
         return -1;
     }
     
     buffer[bytes] = '\0';
-    printf("TCP ricevuto da %s: %s\n", client->name, buffer);
+    printf("TCP <- %s: %s\n", client->name, buffer);
     return bytes;
 }
 
@@ -441,8 +539,10 @@ thread_return_t network_handle_client_thread(thread_param_t arg) {
     Client *client = (Client*)arg;
     char buffer[MAX_MSG_SIZE];
     
+    printf("Thread avviato per client FD:%d\n", (int)client->client_fd);
+    
     if (!lobby_add_client_reference(client)) {
-        printf("Errore aggiunta client alla lobby\n");
+        printf("ERRORE: Impossibile aggiungere client alla lobby (lobby piena?)\n");
         closesocket(client->client_fd);
         free(client);
 #ifdef _WIN32
@@ -452,17 +552,22 @@ thread_return_t network_handle_client_thread(thread_param_t arg) {
 #endif
     }
     
-    while (client->is_active && global_server->is_running) {
+    printf("Client FD:%d aggiunto alla lobby\n", (int)client->client_fd);
+    
+    while (client->is_active && global_server && global_server->is_running) {
         int bytes = network_receive_from_client(client, buffer, sizeof(buffer));
         if (bytes <= 0) {
+            printf("Connessione persa con client %s (FD:%d)\n", client->name, (int)client->client_fd);
             break;
         }
         lobby_handle_client_message(client, buffer);
     }
     
+    printf("Rimuovendo client %s (FD:%d) dalla lobby...\n", client->name, (int)client->client_fd);
     lobby_remove_client(client);
     closesocket(client->client_fd);
     free(client);
+    printf("Client rimosso e memoria liberata\n");
     
 #ifdef _WIN32
     return 0;
@@ -483,8 +588,8 @@ int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)
         printf("Errore creazione thread %s: %s\n", thread_name, strerror(errno));
         return -1;
     }
-    // Correzione: Imposta il tipo di cancellazione del thread
-    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL); // o PTHREAD_CANCEL_DEFERRED
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 #endif
+    printf("Thread %s creato con successo\n", thread_name);
     return 0;
 }
