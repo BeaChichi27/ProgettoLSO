@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -226,11 +227,12 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
         buffer[bytes] = '\0';
     } else if (bytes == 0) {
         set_error("Connessione chiusa dal server");
+        strcpy(buffer, "SERVER_DOWN");
+        return bytes;
     } else {
 #ifdef _WIN32
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
-            // Timeout o nessun dato disponibile (non è un errore grave)
             return 0;
         }
         char err_msg[256];
@@ -238,7 +240,6 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
         set_error(err_msg);
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // Nessun dato disponibile (non è un errore grave)
             return 0;
         }
         char err_msg[256];

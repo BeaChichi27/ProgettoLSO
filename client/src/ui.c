@@ -3,15 +3,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Include cross-platform
 #ifdef _WIN32
     #include <conio.h>
-    #define getch _getch
 #else
     #include <unistd.h>
     #include <termios.h>
-    
-    // Implementazione getch per Linux
+    #include <sys/time.h>
+    #include <sys/select.h>
+
+    int kbhit() {
+        struct timeval tv = { 0L, 0L };
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(0, &fds);
+        return select(1, &fds, NULL, NULL, &tv);
+    }
+
     int getch() {
         struct termios old_tio, new_tio;
         int c;

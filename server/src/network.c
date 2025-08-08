@@ -541,6 +541,9 @@ thread_return_t network_handle_client_thread(thread_param_t arg) {
     
     printf("Thread avviato per client FD:%d\n", (int)client->client_fd);
     
+    // Invia un messaggio di benvenuto al client
+    network_send_to_client(client, "Benvenuto al server Tris! Per favore registrati con: REGISTER:<tuonome>");
+
     if (!lobby_add_client_reference(client)) {
         printf("ERRORE: Impossibile aggiungere client alla lobby (lobby piena?)\n");
         closesocket(client->client_fd);
@@ -554,13 +557,36 @@ thread_return_t network_handle_client_thread(thread_param_t arg) {
     
     printf("Client FD:%d aggiunto alla lobby\n", (int)client->client_fd);
     
+    // Aggiungi un timeout per la registrazione
+    time_t start_time = time(NULL);
+    int registered = 0;
+    
     while (client->is_active && global_server && global_server->is_running) {
+        // Timeout dopo 30 secondi se non registrato
+        if (!registered && difftime(time(NULL), start_time) > 30) {
+            printf("Timeout registrazione per client FD:%d\n", (int)client->client_fd);
+            network_send_to_client(client, "ERROR:Timeout registrazione. Disconnessione.");
+            break;
+        }
+        
         int bytes = network_receive_from_client(client, buffer, sizeof(buffer));
         if (bytes <= 0) {
             printf("Connessione persa con client %s (FD:%d)\n", client->name, (int)client->client_fd);
             break;
         }
+        
+        // Controlla se il client si è registrato
+        if (!registered && strncmp(buffer, "REGISTER:", 9) != 0) {
+            network_send_to_client(client, "ERROR:Devi prima registrarti con REGISTER:<nome>");
+            continue;
+        }
+        
         lobby_handle_client_message(client, buffer);
+        
+        // Se il messaggio era una registrazione, segnalo che è registrato
+        if (strncmp(buffer, "REGISTER:", 9) == 0) {
+            registered = 1;
+        }
     }
     
     printf("Rimuovendo client %s (FD:%d) dalla lobby...\n", client->name, (int)client->client_fd);
