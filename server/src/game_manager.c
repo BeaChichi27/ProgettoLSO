@@ -10,37 +10,36 @@ static int next_game_id = 1;
 
 int mutex_init(mutex_t *mutex) {
     #ifdef _WIN32
-        InitializeCriticalSection(&mutex->win_mutex);
-        return 0;
+        return InitializeCriticalSection(mutex); // Corretto: Inizializza l'intera struttura
     #else
-        return pthread_mutex_init(&mutex->nix_mutex, NULL);
+        return pthread_mutex_init(mutex, NULL); // Corretto: Inizializza l'intera struttura
     #endif
 }
 
 int mutex_lock(mutex_t *mutex) {
     #ifdef _WIN32
-        EnterCriticalSection(&mutex->win_mutex);
+        EnterCriticalSection(mutex); // Corretto: Blocca l'intera struttura
         return 0;
     #else
-        return pthread_mutex_lock(&mutex->nix_mutex);
+        return pthread_mutex_lock(mutex); // Corretto: Blocca l'intera struttura
     #endif
 }
 
 int mutex_unlock(mutex_t *mutex) {
     #ifdef _WIN32
-        LeaveCriticalSection(&mutex->win_mutex);
+        LeaveCriticalSection(mutex); // Corretto: Sblocca l'intera struttura
         return 0;
     #else
-        return pthread_mutex_unlock(&mutex->nix_mutex);
+        return pthread_mutex_unlock(mutex); // Corretto: Sblocca l'intera struttura
     #endif
 }
 
 int mutex_destroy(mutex_t *mutex) {
     #ifdef _WIN32
-        DeleteCriticalSection(&mutex->win_mutex);
+        DeleteCriticalSection(mutex); // Corretto: Distrugge l'intera struttura
         return 0;
     #else
-        return pthread_mutex_destroy(&mutex->nix_mutex);
+        return pthread_mutex_destroy(mutex); // Corretto: Distrugge l'intera struttura
     #endif
 }
 
