@@ -4,7 +4,7 @@
 #ifndef TIMEOUT_SEC
 #define TIMEOUT_SEC 5
 #endif
-
+#include <pthread.h>
 // Cross-platform socket includes
 // Cross-platform socket includes
 #ifdef _WIN32
@@ -42,7 +42,18 @@ typedef struct {
     socket_t udp_sock;
     int udp_port;
     char player_name[50];
+#ifdef _WIN32
+    HANDLE keep_alive_thread;
+#else
+    pthread_t keep_alive_thread;
+#endif
+    int keep_alive_active;
 } NetworkConnection;
+
+#define KEEP_ALIVE_INTERVAL 30 // secondi tra i ping
+
+void network_start_keep_alive(NetworkConnection *conn);
+void network_stop_keep_alive(NetworkConnection *conn);
 
 int network_global_init();
 void network_global_cleanup();

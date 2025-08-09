@@ -37,6 +37,64 @@ static void set_error(const char *msg) {
     last_error[sizeof(last_error) - 1] = '\0';
 }
 
+#ifdef _WIN32
+static DWORD WINAPI keep_alive_thread(LPVOID lpParam) {
+#else
+static void* keep_alive_thread(void* lpParam) {
+#endif
+    NetworkConnection* conn = (NetworkConnection*)lpParam;
+    
+    while (conn->keep_alive_active) {
+        if (!network_send(conn, "PING", 0)) {
+            printf("Keep-alive fallito\n");
+            break;
+        }
+        
+        // Attendi l'intervallo
+#ifdef _WIN32
+        Sleep(KEEP_ALIVE_INTERVAL * 1000);
+#else
+        sleep(KEEP_ALIVE_INTERVAL);
+#endif
+    }
+    
+    return 0;
+}
+
+void network_start_keep_alive(NetworkConnection *conn) {
+    if (!conn) return;
+    
+    conn->keep_alive_active = 1;
+    
+#ifdef _WIN32
+    conn->keep_alive_thread = CreateThread(NULL, 0, keep_alive_thread, conn, 0, NULL);
+    if (conn->keep_alive_thread == NULL) {
+        printf("Errore creazione thread keep-alive\n");
+    }
+#else
+    if (pthread_create(&conn->keep_alive_thread, NULL, keep_alive_thread, conn) != 0) {
+        printf("Errore creazione thread keep-alive\n");
+    }
+#endif
+}
+
+void network_stop_keep_alive(NetworkConnection *conn) {
+    if (!conn) return;
+    
+    conn->keep_alive_active = 0;
+    
+#ifdef _WIN32
+    if (conn->keep_alive_thread) {
+        WaitForSingleObject(conn->keep_alive_thread, 1000);
+        CloseHandle(conn->keep_alive_thread);
+    }
+#else
+    if (conn->keep_alive_thread) {
+        pthread_join(conn->keep_alive_thread, NULL);
+    }
+#endif
+}
+
 // Cross-platform network initialization
 int network_global_init() {
 #ifdef _WIN32
@@ -230,30 +288,41 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
     }
     
     if (bytes > 0) {
-        buffer[bytes] = '\0';
+        buffer[bytes] = '\0'; // Termina la stringa
+
+        // Gestione keep-alive
+        if (strcmp(buffer, "PING") == 0) {
+            if (!network_send(conn, "PONG", use_udp)) {
+                return -1; // Errore nell'invio di PONG
+            }
+            return 0; // Non è un messaggio "reale" per l'applicazione
+        }
+
+        return bytes; // Restituisce il numero di byte ricevuti
     } else if (bytes == 0) {
+        // Connessione chiusa dal server
         set_error("Connessione chiusa dal server");
         strcpy(buffer, "SERVER_DOWN");
-        return bytes;
+        return bytes; // Ritorna 0 per indicare la disconnessione
     } else {
+        // Errore nella ricezione
 #ifdef _WIN32
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
-            return 0;
+            return 0; // Timeout (non un errore)
         }
         char err_msg[256];
         snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
         set_error(err_msg);
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0;
+            return 0; // Timeout (non un errore)
         }
         char err_msg[256];
         snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
         set_error(err_msg);
 #endif
     }
-    
     return bytes;
 }
 

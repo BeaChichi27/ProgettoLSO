@@ -43,40 +43,67 @@ void handle_create_game(NetworkConnection* conn) {
 
     ui_show_waiting_screen();
     time_t start_time = time(NULL);
-    int received_pong = 1;
+    int timeout_occurred = 0;
     
     while (keep_running) {
-        // Controlla timeout
-        if (difftime(time(NULL), start_time) > 300) { // 5 minuti
+        // Controlla timeout (5 minuti)
+        if (difftime(time(NULL), start_time) > 300) {
             ui_show_message("Timeout: nessun avversario trovato");
             network_send(conn, "CANCEL", 0);
-            return;
+            timeout_occurred = 1;
+            break;
         }
         
-        // Ricevi messaggi dal server
-        char message[MAX_MSG_SIZE];
-        int bytes = network_receive(conn, message, sizeof(message), 0);
+        // Ricevi messaggi dal server con timeout breve per controllare input
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(conn->tcp_sock, &read_fds);
         
-        if (bytes > 0) {
-            if (strstr(message, "OPPONENT_JOINED")) {
-                ui_show_message("Avversario trovato! La partita inizia...");
+        struct timeval tv;
+        tv.tv_sec = 1;  // Timeout di 1 secondo per select
+        tv.tv_usec = 0;
+        
+        int select_result;
+#ifdef _WIN32
+        select_result = select(0, &read_fds, NULL, NULL, &tv);
+#else
+        select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
+#endif
+
+        if (select_result > 0) {
+            char message[MAX_MSG_SIZE];
+            int bytes = network_receive(conn, message, sizeof(message), 0);
+            
+            if (bytes > 0) {
+                if (strstr(message, "OPPONENT_JOINED")) {
+                    ui_show_message("Avversario trovato! La partita inizia...");
+                    return;
+                }
+                else if (strstr(message, "WAITING:")) {
+                    ui_show_waiting_screen();
+                }
+                else if (strcmp(message, "PING") == 0) {
+                    network_send(conn, "PONG", 0);
+                }
+            }
+            else if (bytes < 0) {
+                ui_show_error("Connessione con il server interrotta");
+                keep_running = 0;
                 return;
             }
-            else if (strstr(message, "WAITING:")) {
-                // Aggiorna schermata di attesa
-                ui_show_waiting_screen_with_message(message + 8);
-            }
-            else if (strcmp(message, "PING") == 0) {
-                network_send(conn, "PONG", 0);
-            }
         }
-        else if (bytes < 0) {
-            ui_show_error("Connessione con il server interrotta");
+        else if (select_result == -1) {
+            // Errore in select
+#ifdef _WIN32
+            ui_show_error("Errore nella connessione");
+#else
+            ui_show_error(strerror(errno));
+#endif
             keep_running = 0;
             return;
         }
         
-        // Controlla input utente
+        // Controlla input utente (cross-platform)
         if (kbhit()) {
             int key = getch();
             if (key == 27) { // ESC
@@ -85,7 +112,17 @@ void handle_create_game(NetworkConnection* conn) {
             }
         }
         
-        sleep(1); // Riduci il carico sulla CPU
+        // Sleep cross-platform
+#ifdef _WIN32
+        Sleep(100); // 100ms
+#else
+        sleep(100); // 100ms
+#endif
+    }
+
+    if (timeout_occurred) {
+        // Pulizia aggiuntiva in caso di timeout
+        network_send(conn, "CANCEL", 0);
     }
 }
 
@@ -252,6 +289,16 @@ int main() {
     ui_clear_screen();
     printf("\nRegistrazione completata come %s\n", player_name);
     sleep(1); // Breve pausa per leggere il messaggio
+    
+    if (!network_register_name(&conn, player_name)) {
+        ui_show_error(network_get_error());
+        network_disconnect(&conn);
+        network_global_cleanup();
+        return 1;
+    }
+
+    // Avvia keep-alive dopo la registrazione
+    network_start_keep_alive(&conn);
 
     while (keep_running) {  // Modificato da while(1)
         int choice = ui_show_main_menu();
@@ -303,6 +350,7 @@ int main() {
         }
     }
 
+    network_stop_keep_alive(&conn);
     network_disconnect(&conn);
     network_global_cleanup();
     return 0;
