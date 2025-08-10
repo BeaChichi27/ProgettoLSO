@@ -191,6 +191,13 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     }
     
     printf("Lista partite ricevuta: %s\n", message);
+    
+    // Verifica che sia davvero una lista di partite
+    if (!strstr(message, "GAMES:")) {
+        ui_show_error("Risposta server non valida per lista partite");
+        return PLAYER_NONE;
+    }
+    
     ui_show_message(message);
     
     // Ottieni l'ID della partita dall'utente
@@ -225,8 +232,16 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     
     printf("Risposta join: %s\n", message);
     
-    if (!strstr(message, "JOIN_ACCEPTED")) {
-        ui_show_error("Impossibile unirsi alla partita");
+    // Controlla la risposta corretta
+    if (strstr(message, "JOIN_ACCEPTED")) {
+        printf("Join accettato!\n");
+    } 
+    else if (strstr(message, "ERROR:")) {
+        ui_show_error(message);
+        return PLAYER_NONE;
+    } 
+    else {
+        ui_show_error("Risposta join non riconosciuta");
         return PLAYER_NONE;
     }
 
@@ -278,6 +293,10 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
             }
             else if (strstr(message, "OPPONENT_LEFT")) {
                 ui_show_error("L'avversario ha lasciato la partita");
+                return PLAYER_NONE;
+            }
+            else if (strstr(message, "GAME_CANCELLED")) {
+                ui_show_error("La partita è stata cancellata");
                 return PLAYER_NONE;
             }
         }
@@ -499,6 +518,7 @@ int main() {
         return 1;
     }
     
+    // Registra il nome (rimosso il doppio registro)
     if (!network_register_name(&conn, player_name)) {
         ui_show_error(network_get_error());
         network_disconnect(&conn);
@@ -506,33 +526,25 @@ int main() {
         return 1;
     }
 
-    // Aggiungi questo per assicurarti che la registrazione sia andata a buon fine
     ui_clear_screen();
     printf("\nRegistrazione completata come %s\n", player_name);
-    sleep(1); // Breve pausa per leggere il messaggio
-    
-    if (!network_register_name(&conn, player_name)) {
-        ui_show_error(network_get_error());
-        network_disconnect(&conn);
-        network_global_cleanup();
-        return 1;
-    }
+    sleep(1);
 
     // Avvia keep-alive dopo la registrazione
     network_start_keep_alive(&conn);
 
-    while (keep_running) {  // Modificato da while(1)
+    while (keep_running) {
         int choice = ui_show_main_menu();
         
         switch (choice) {
-            case 1: {
+            case 1: {  // Crea partita
                 PlayerSymbol my_symbol = handle_create_game(&conn);
-                if (my_symbol == PLAYER_NONE) break; // Errore
-                handle_create_game(&conn);
+                if (my_symbol == PLAYER_NONE) break;
+
                 Game game;
                 game_init(&game);
                 game.state = GAME_STATE_PLAYING;
-                game.current_player = PLAYER_X;
+                game.current_player = PLAYER_X;  // Il server dovrebbe gestire chi inizia
                 
                 while (keep_running && game.state != GAME_STATE_OVER) {
                     game_loop(&conn, &game, my_symbol);
@@ -542,20 +554,27 @@ int main() {
                             network_send(&conn, "REMATCH", 0);
                             game.state = GAME_STATE_REMATCH;
                             game_reset(&game);
+                            // Aspetta conferma rematch dal server
+                            char response[MAX_MSG_SIZE];
+                            if (network_receive(&conn, response, sizeof(response), 0) > 0) {
+                                if (strstr(response, "REMATCH_ACCEPTED")) {
+                                    my_symbol = (strstr(response, "X") ? PLAYER_X : PLAYER_O);
+                                }
+                            }
                         }
                     }
                 }
                 break;
             }
                 
-            case 2: {
+            case 2: {  // Unisciti a partita
                 PlayerSymbol my_symbol = handle_join_game(&conn);
-                if (my_symbol == PLAYER_NONE) break; // Errore
-                handle_join_game(&conn);
+                if (my_symbol == PLAYER_NONE) break;
+
                 Game game;
                 game_init(&game);
                 game.state = GAME_STATE_PLAYING;
-                game.current_player = PLAYER_X;
+                game.current_player = PLAYER_X;  // Il server dovrebbe gestire chi inizia
                 
                 while (keep_running && game.state != GAME_STATE_OVER) {
                     game_loop(&conn, &game, my_symbol);
@@ -565,14 +584,25 @@ int main() {
                             network_send(&conn, "REMATCH", 0);
                             game.state = GAME_STATE_REMATCH;
                             game_reset(&game);
+                            // Aspetta conferma rematch dal server
+                            char response[MAX_MSG_SIZE];
+                            if (network_receive(&conn, response, sizeof(response), 0) > 0) {
+                                if (strstr(response, "REMATCH_ACCEPTED")) {
+                                    my_symbol = (strstr(response, "X") ? PLAYER_X : PLAYER_O);
+                                }
+                            }
                         }
                     }
                 }
                 break;
             }
                 
-            case 3:
+            case 3:  // Esci
                 keep_running = 0;
+                break;
+                
+            default:
+                ui_show_error("Scelta non valida");
                 break;
         }
     }

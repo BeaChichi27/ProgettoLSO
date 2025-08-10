@@ -269,7 +269,12 @@ int network_send_move(NetworkConnection *conn, int move) {
 }
 
 int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int use_udp) {
-    if (!conn || (use_udp && conn->udp_sock == INVALID_SOCKET_VALUE) || 
+    if (!conn || !buffer || buf_size <= 0) {
+        set_error("Parametri non validi");
+        return -1;
+    }
+
+    if ((use_udp && conn->udp_sock == INVALID_SOCKET_VALUE) || 
         (!use_udp && conn->tcp_sock == INVALID_SOCKET_VALUE)) {
         set_error("Connessione non valida");
         return -1;
@@ -278,52 +283,61 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
     socket_t sock = use_udp ? conn->udp_sock : conn->tcp_sock;
     int bytes;
     
-    if (use_udp) {
-        struct sockaddr_in from_addr;
-        socklen_t from_len = sizeof(from_addr);
-        bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
-                        (struct sockaddr*)&from_addr, &from_len);
-    } else {
-        bytes = recv(sock, buffer, buf_size - 1, 0);
-    }
-    
-    if (bytes > 0) {
-        buffer[bytes] = '\0'; // Termina la stringa
+    while (1) {  // Loop per gestire i PING
+        if (use_udp) {
+            struct sockaddr_in from_addr;
+            socklen_t from_len = sizeof(from_addr);
+            bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
+                          (struct sockaddr*)&from_addr, &from_len);
+        } else {
+            bytes = recv(sock, buffer, buf_size - 1, 0);
+        }
+        
+        if (bytes > 0) {
+            buffer[bytes] = '\0';  // Termina la stringa
 
-        // Gestione keep-alive
-        if (strcmp(buffer, "PING") == 0) {
-            if (!network_send(conn, "PONG", use_udp)) {
-                return -1; // Errore nell'invio di PONG
+            // Gestione automatica keep-alive per PING
+            if (strcmp(buffer, "PING") == 0) {
+                network_send_to_client(client, "PONG");
+                continue; // Non passare alla lobby
             }
-            return 0; // Non è un messaggio "reale" per l'applicazione
-        }
+            // Delega altri messaggi alla lobby
+            else {
+                lobby_handle_client_message(client, buffer);
+            }
 
-        return bytes; // Restituisce il numero di byte ricevuti
-    } else if (bytes == 0) {
-        // Connessione chiusa dal server
-        set_error("Connessione chiusa dal server");
-        strcpy(buffer, "SERVER_DOWN");
-        return bytes; // Ritorna 0 per indicare la disconnessione
-    } else {
-        // Errore nella ricezione
+            return bytes;  // Restituisce messaggi non-PING
+        } 
+        else if (bytes == 0) {
+            // Connessione chiusa dal server (solo TCP)
+            if (!use_udp) {
+                set_error("Connessione chiusa dal server");
+                strcpy(buffer, "SERVER_DOWN");
+            }
+            return 0;
+        } 
+        else {
+            // Gestione errori
 #ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
-            return 0; // Timeout (non un errore)
-        }
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
-        set_error(err_msg);
+            int error = WSAGetLastError();
+            if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
+                return 0;  // Timeout (non un errore)
+            }
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
+            set_error(err_msg);
 #else
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0; // Timeout (non un errore)
-        }
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
-        set_error(err_msg);
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return 0;  // Timeout (non un errore)
+            }
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
+            set_error(err_msg);
 #endif
+            return -1;
+        }
     }
-    return bytes;
+}
 }
 
 int network_send(NetworkConnection *conn, const char *message, int use_udp) {
