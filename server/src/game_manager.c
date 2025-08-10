@@ -141,30 +141,57 @@ int game_create_new(Client *creator) {
 }
 
 int game_join(Client *client, int game_id) {
+    // Controlli iniziali e validazione
     if (!client) return 0;
-    Game *game = game_find_by_id(game_id);
-    if (!game) return 0;
-    
-    mutex_lock(&game->mutex);  // CAMBIATO: era EnterCriticalSection
-    if (game->state != GAME_STATE_WAITING || !game->player1 || game->player2) {
-        mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
+
+    // FIX 1: Controlla se il client è già in una partita
+    if (client->game_id > 0) {
+        network_send_to_client(client, "ERROR:Sei già in una partita");
+        printf("Client %s tenta di unirsi ma è già in partita %d\n", client->name, client->game_id);
         return 0;
     }
-    
+
+    Game *game = game_find_by_id(game_id);
+    if (!game) {
+        network_send_to_client(client, "ERROR:Partita non trovata");
+        return 0;
+    }
+
+    mutex_lock(&game->mutex);
+
+    // FIX 2: Controlla se il client sta tentando di unirsi alla sua stessa partita
+    if (game->player1 == client) {
+        network_send_to_client(client, "ERROR:Non puoi unirti alla tua partita");
+        mutex_unlock(&game->mutex);
+        return 0;
+    }
+
+    // Verifica lo stato della partita e la disponibilità di posti
+    if (game->state != GAME_STATE_WAITING || !game->player1 || game->player2) {
+        network_send_to_client(client, "ERROR:Partita non disponibile");
+        mutex_unlock(&game->mutex);
+        return 0;
+    }
+
+    // Logica per unire il client alla partita
     game->player2 = client;
     game->state = GAME_STATE_PLAYING;
     client->game_id = game_id;
     client->symbol = 'O';
-    
-    mutex_unlock(&game->mutex);  // CAMBIATO: era LeaveCriticalSection
-    
+
+    mutex_unlock(&game->mutex);
+
     printf("Client %s si e' unito alla partita %d\n", client->name, game_id);
+
+    // FIX 3: Invia conferme corrette e segnali di inizio partita
     network_send_to_client(client, "JOIN_ACCEPTED:O");
     network_send_to_client(game->player1, "OPPONENT_JOINED");
     network_send_to_client(game->player1, "GAME_START:X");
     network_send_to_client(game->player2, "GAME_START:O");
+
     return 1;
 }
+
 
 void game_leave(Client *client) {
     if (!client || client->game_id <= 0) return;

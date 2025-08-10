@@ -131,12 +131,20 @@ void lobby_broadcast_message(const char *message, Client *exclude) {
 
 // Sostituisci la funzione lobby_handle_client_message in lobby.c
 
+// Fix per lobby_handle_client_message - Sostituire completamente
+
 void lobby_handle_client_message(Client *client, const char *message) {
     if (!client || !message) return;
     
     printf("Elaborando messaggio: %s da %s\n", message, client->name);
     
     if (strncmp(message, "CREATE_GAME", 11) == 0) {
+        // FIX: Controlla se già in partita prima di creare
+        if (client->game_id > 0) {
+            network_send_to_client(client, "ERROR:Sei già in una partita");
+            return;
+        }
+        
         int game_id = game_create_new(client);
         if (game_id > 0) {
             char response[64];
@@ -157,11 +165,10 @@ void lobby_handle_client_message(Client *client, const char *message) {
         int game_id = atoi(message + 5);
         printf("Client %s tenta di unirsi alla partita %d\n", client->name, game_id);
         
-        if (game_join(client, game_id)) {
-            printf("Client %s si è unito alla partita %d\n", client->name, game_id);
-            // I messaggi di conferma sono già inviati da game_join
-        } else {
-            network_send_to_client(client, "ERROR:Impossibile unirsi alla partita");
+        // FIX: La logica è già gestita in game_join
+        if (!game_join(client, game_id)) {
+            // game_join già invia il messaggio di errore appropriato
+            printf("Join fallito per %s -> partita %d\n", client->name, game_id);
         }
     } 
     else if (strncmp(message, "MOVE:", 5) == 0) {
@@ -179,12 +186,18 @@ void lobby_handle_client_message(Client *client, const char *message) {
         network_send_to_client(client, "LEFT_GAME");
     } 
     else if (strncmp(message, "REMATCH", 7) == 0) {
-        game_reset(client->game_id);
+        if (client->game_id > 0) {
+            game_reset(client->game_id);
+        } else {
+            network_send_to_client(client, "ERROR:Non sei in una partita");
+        }
     } 
     else if (strncmp(message, "CANCEL", 6) == 0) {
         if (client->game_id > 0) {
             game_leave(client);
             network_send_to_client(client, "GAME_CANCELED");
+        } else {
+            network_send_to_client(client, "ERROR:Non sei in una partita");
         }
     } 
     else {

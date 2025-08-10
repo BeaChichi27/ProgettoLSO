@@ -298,12 +298,11 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
 
             // Gestione automatica keep-alive per PING
             if (strcmp(buffer, "PING") == 0) {
-                network_send_to_client(client, "PONG");
-                continue; // Non passare alla lobby
-            }
-            // Delega altri messaggi alla lobby
-            else {
-                lobby_handle_client_message(client, buffer);
+                if (!network_send(conn, "PONG", use_udp)) {
+                    set_error("Errore nell'invio di PONG");
+                    return -1;
+                }
+                continue;  // Continua a ricevere il prossimo messaggio
             }
 
             return bytes;  // Restituisce messaggi non-PING
@@ -337,7 +336,6 @@ int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int 
             return -1;
         }
     }
-}
 }
 
 int network_send(NetworkConnection *conn, const char *message, int use_udp) {

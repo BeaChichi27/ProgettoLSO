@@ -171,6 +171,8 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
 
 // Sostituisci la funzione handle_join_game in main.c del client
 
+// Fix per handle_join_game nel client - Sostituire completamente
+
 PlayerSymbol handle_join_game(NetworkConnection* conn) {
     PlayerSymbol assigned_symbol = PLAYER_NONE;
     char message[MAX_MSG_SIZE];
@@ -223,101 +225,52 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
         return PLAYER_NONE;
     }
 
-    // Ricevi la risposta di conferma
-    bytes = network_receive(conn, message, sizeof(message), 0);
-    if (bytes <= 0) {
-        ui_show_error(network_get_error());
-        return PLAYER_NONE;
-    }
+    printf("Richiesta inviata, in attesa di risposta...\n");
     
-    printf("Risposta join: %s\n", message);
-    
-    // Controlla la risposta corretta
-    if (strstr(message, "JOIN_ACCEPTED")) {
-        printf("Join accettato!\n");
-    } 
-    else if (strstr(message, "ERROR:")) {
-        ui_show_error(message);
-        return PLAYER_NONE;
-    } 
-    else {
-        ui_show_error("Risposta join non riconosciuta");
-        return PLAYER_NONE;
-    }
-
-    printf("Join accettato, in attesa del messaggio di avvio...\n");
-    
-    // Aspetta il messaggio GAME_START
+    // FIX: Loop per gestire tutte le possibili risposte
     while (keep_running) {
-        // Configura select per timeout
-        fd_set read_fds;
-        FD_ZERO(&read_fds);
-        FD_SET(conn->tcp_sock, &read_fds);
-        
-        struct timeval tv;
-        tv.tv_sec = 1;  // Timeout di 1 secondo
-        tv.tv_usec = 0;
-        
-        int select_result;
-#ifdef _WIN32
-        select_result = select(0, &read_fds, NULL, NULL, &tv);
-#else
-        select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
-#endif
-
-        if (select_result > 0 && FD_ISSET(conn->tcp_sock, &read_fds)) {
-            bytes = network_receive(conn, message, sizeof(message), 0);
-            
-            if (bytes <= 0) {
-                ui_show_error("Errore ricezione messaggio avvio");
-                return PLAYER_NONE;
-            }
-
-            printf("Messaggio ricevuto: %s\n", message);
-            
-            if (strstr(message, "GAME_START:")) {
-                char symbol;
-                if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
-                    assigned_symbol = (PlayerSymbol)symbol;
-                    printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
-                    ui_show_message("Partita iniziata!");
-                    return assigned_symbol;
-                }
-            }
-            else if (strcmp(message, "PING") == 0) {
-                network_send(conn, "PONG", 0);
-            }
-            else if (strstr(message, "ERROR:")) {
-                ui_show_error(message);
-                return PLAYER_NONE;
-            }
-            else if (strstr(message, "OPPONENT_LEFT")) {
-                ui_show_error("L'avversario ha lasciato la partita");
-                return PLAYER_NONE;
-            }
-            else if (strstr(message, "GAME_CANCELLED")) {
-                ui_show_error("La partita è stata cancellata");
-                return PLAYER_NONE;
-            }
-        }
-        else if (select_result == -1) {
-            // Errore in select
-#ifdef _WIN32
-            ui_show_error("Errore nella connessione");
-#else
-            ui_show_error(strerror(errno));
-#endif
+        bytes = network_receive(conn, message, sizeof(message), 0);
+        if (bytes <= 0) {
+            ui_show_error("Errore ricezione risposta");
             return PLAYER_NONE;
         }
         
-        // Controlla input utente per annullamento
-        if (kbhit()) {
-            int key = getch();
-            if (key == 27) { // ESC
-                printf("Operazione annullata dall'utente\n");
-                network_send(conn, "CANCEL_JOIN", 0);
-                return PLAYER_NONE;
+        printf("Risposta ricevuta: %s\n", message);
+        
+        // FIX: Gestisci correttamente tutti i tipi di risposta
+        if (strstr(message, "ERROR:")) {
+            ui_show_error(message);
+            return PLAYER_NONE;
+        }
+        else if (strstr(message, "JOIN_ACCEPTED")) {
+            printf("Join accettato! In attesa del messaggio GAME_START...\n");
+            continue; // Aspetta il GAME_START
+        }
+        else if (strstr(message, "GAME_START:")) {
+            char symbol;
+            if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
+                assigned_symbol = (PlayerSymbol)symbol;
+                printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
+                ui_show_message("Partita iniziata!");
+                return assigned_symbol;
             }
+        }
+        else if (strstr(message, "GAMES:")) {
+            // FIX: Se ricevi di nuovo la lista, significa che c'è stato un errore
+            ui_show_error("Server ha inviato lista invece di risposta JOIN");
+            return PLAYER_NONE;
+        }
+        else if (strcmp(message, "PING") == 0) {
+            network_send(conn, "PONG", 0);
+            continue;
+        }
+        else if (strstr(message, "OPPONENT_LEFT") || strstr(message, "GAME_CANCELLED")) {
+            ui_show_error(message);
+            return PLAYER_NONE;
+        }
+        else {
+            printf("Messaggio non riconosciuto durante JOIN: %s\n", message);
+            continue; // Continua ad aspettare
         }
     }
     
