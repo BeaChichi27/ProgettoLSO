@@ -53,7 +53,12 @@ int game_manager_init() {
         games[i].game_id = -1;
         games[i].state = GAME_STATE_WAITING;
         if (mutex_init(&games[i].mutex) != 0) {
+            // Aggiungi cleanup per i mutex già inizializzati
+            for (int j = 0; j < i; j++) {
+                mutex_destroy(&games[j].mutex);
+            }
             mutex_unlock(&games_mutex);
+            mutex_destroy(&games_mutex);
             return 0;
         }
     }

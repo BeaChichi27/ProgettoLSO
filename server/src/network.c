@@ -497,49 +497,32 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
         return -1;
     }
     
-    // Timeout per la ricezione (60 secondi invece di 5)
+    // Timeout più lungo per evitare disconnessioni premature
 #ifdef _WIN32
-    DWORD timeout_ms = 60000;  // 60 secondi in millisecondi
-    if (setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR_VALUE) {
-        printf("Errore impostazione timeout ricezione: %d\n", WSAGetLastError());
-        return -1;
-    }
+    DWORD timeout_ms = 30000; // 30 secondi
+    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms));
 #else
-    struct timeval timeout = { .tv_sec = 60, .tv_usec = 0 };  // 60 secondi
-    if (setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        printf("Errore impostazione timeout ricezione: %s\n", strerror(errno));
-        return -1;
-    }
+    struct timeval timeout = { .tv_sec = 30, .tv_usec = 0 }; // 30 secondi
+    setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 #endif
     
     int bytes = recv(client->client_fd, buffer, (int)buf_size - 1, 0);
     if (bytes <= 0) {
         if (bytes == 0) {
-            printf("Client %s (FD:%d) si è disconnesso normalmente\n", client->name, (int)client->client_fd);
+            printf("Client %s (FD:%d) si è disconnesso correttamente\n", client->name, (int)client->client_fd);
         } else {
 #ifdef _WIN32
             int error = WSAGetLastError();
-            printf("Errore ricezione da %s (FD:%d): %d", client->name, (int)client->client_fd, error);
-            
-            // Log aggiuntivo per debug
-            if (error == WSAECONNRESET) {
-                printf(" (Connessione resettata dal client)\n");
-            } else if (error == WSAETIMEDOUT) {
-                printf(" (Timeout ricezione scattato)\n");
+            if (error == WSAETIMEDOUT) {
+                printf("Timeout ricezione da %s (FD:%d) - client inattivo\n", client->name, (int)client->client_fd);
             } else {
-                printf("\n");
+                printf("Errore ricezione da %s (FD:%d): %d\n", client->name, (int)client->client_fd, error);
             }
 #else
-            printf("Errore ricezione da %s (FD:%d): %s (errno: %d)", 
-                  client->name, (int)client->client_fd, strerror(errno), errno);
-            
-            // Log aggiuntivo per debug
-            if (errno == ECONNRESET) {
-                printf(" (Connessione resettata dal client)\n");
-            } else if (errno == ETIMEDOUT) {
-                printf(" (Timeout ricezione scattato)\n");
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                printf("Timeout ricezione da %s (FD:%d) - client inattivo\n", client->name, (int)client->client_fd);
             } else {
-                printf("\n");
+                printf("Errore ricezione da %s (FD:%d): %s\n", client->name, (int)client->client_fd, strerror(errno));
             }
 #endif
         }
@@ -550,6 +533,87 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     buffer[bytes] = '\0';
     printf("TCP <- %s: %s\n", client->name, buffer);
     return bytes;
+}
+
+// Aggiungi questa funzione nel file network.c del server
+
+thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
+    Client *client = (Client*)arg;
+    char buffer[MAX_MSG_SIZE];
+    int bytes;
+    
+    printf("Thread client avviato per %s (FD: %d)\n", client->name, (int)client->client_fd);
+    
+    // Aggiungi il client alla lobby
+    if (!lobby_add_client_reference(client)) {
+        printf("Errore aggiunta client %s alla lobby\n", client->name);
+        closesocket(client->client_fd);
+        free(client);
+#ifdef _WIN32
+        return 0;
+#else
+        return NULL;
+#endif
+    }
+    
+    printf("Client FD:%d aggiunto alla lobby nello slot\n", (int)client->client_fd);
+    
+    while (client->is_active) {
+        bytes = network_receive_from_client(client, buffer, sizeof(buffer));
+        
+        if (bytes <= 0) {
+            printf("Client %s disconnesso (bytes: %d)\n", client->name, bytes);
+            break;
+        }
+        
+        printf("Gestendo messaggio da %s: %s\n", client->name, buffer);
+        
+        // FIX PRINCIPALE: Gestisci i messaggi di registrazione qui
+        if (strncmp(buffer, "REGISTER:", 9) == 0) {
+            const char *name = buffer + 9;
+            
+            // Controlla se il nome è già in uso
+            if (lobby_find_client_by_name(name) && strcmp(client->name, name) != 0) {
+                network_send_to_client(client, "ERROR:Nome già in uso");
+                continue;
+            }
+            
+            // Se è lo stesso nome, conferma la registrazione
+            if (strcmp(client->name, name) == 0) {
+                network_send_to_client(client, "OK:Già registrato");
+                continue;
+            }
+            
+            // Aggiorna il nome del client
+            strncpy(client->name, name, MAX_NAME_LEN - 1);
+            client->name[MAX_NAME_LEN - 1] = '\0';
+            
+            network_send_to_client(client, "OK:Registrazione completata");
+            printf("Client registrato con nome: %s\n", name);
+        }
+        // Gestisci i ping/keep-alive
+        else if (strcmp(buffer, "PING") == 0) {
+            network_send_to_client(client, "PONG");
+        }
+        // Delega altri messaggi alla lobby
+        else {
+            lobby_handle_client_message(client, buffer);
+        }
+    }
+    
+    printf("Client %s sta uscendo dal thread\n", client->name);
+    
+    // Pulizia
+    lobby_remove_client(client);
+    closesocket(client->client_fd);
+    free(client);
+    
+    printf("Thread client terminato\n");
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
 }
 
 int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name) {

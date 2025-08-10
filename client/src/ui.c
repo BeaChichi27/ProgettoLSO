@@ -76,20 +76,32 @@ void ui_show_board(const char board[3][3]) {
     printf("\n");
 }
 
+// Sostituisci la funzione ui_get_player_move in ui.c
+
 int ui_get_player_move() {
-    printf("Scegli una cella (1-9) o 0 per uscire: ");
+    printf("\nTABLELLA POSIZIONI:\n");
+    printf(" 1 | 2 | 3 \n");
+    printf("---+---+---\n");
+    printf(" 4 | 5 | 6 \n");
+    printf("---+---+---\n");
+    printf(" 7 | 8 | 9 \n");
+    printf("\nScegli una cella (1-9) o 0 per uscire: ");
+    fflush(stdout);
     
-    while (1) {
-        char input = getch();
-        if (input == '0') {
-            printf("0\n");
-            return 0;
-        }
-        if (input >= '1' && input <= '9') {
-            printf("%c\n", input);
-            return input - '0';
-        }
+    char input[10];
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        return 0;
     }
+    
+    int choice = atoi(input);
+    
+    if (choice >= 0 && choice <= 9) {
+        printf("Scelta: %d\n", choice);
+        return choice;
+    }
+    
+    printf("Scelta non valida! Riprova.\n");
+    return ui_get_player_move();  // Richiama ricorsivamente
 }
 
 void ui_show_message(const char *message) {

@@ -1,16 +1,19 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
-LDFLAGS = -lws2_32
-SRCDIR = src
-HEADERDIR = $(SRCDIR)/headers
-TARGET = server.exe
+INCLUDES = -Isrc/headers
+LIBS = -lpthread  # Aggiungi altre librerie necessarie per Linux
 
-all: $(TARGET)
+SERVER_SRC = $(wildcard src/*.c)
+SERVER_OBJ = $(SERVER_SRC:.c=.o)
+SERVER_TARGET = server
 
-$(TARGET):
-	$(CC) $(CFLAGS) $(SRCDIR)/*.c -o $@ -I$(HEADERDIR) $(LDFLAGS)
+all: $(SERVER_TARGET)
+
+$(SERVER_TARGET): $(SERVER_OBJ)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 clean:
-	del $(TARGET) 2>nul || true
-
-.PHONY: all clean
+	rm -f $(SERVER_TARGET) $(SERVER_OBJ)

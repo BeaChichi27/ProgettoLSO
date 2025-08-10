@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  server:
+    build: ./server
+    container_name: "${COMPOSE_PROJECT_NAME}-server-1"
+    ports:
+      - "8080:8080"
+    networks:
+      - tris-net
+
+  client:
+    build: ./client
+    depends_on:
+      - server
+    environment:
+      - SERVER_HOST=server  # Usa il nome del servizio come hostname
+    networks:
+      - tris-net
+    stdin_open: true  # Necessario per l'input interattivo
+    tty: true         # Necessario per l'input interattivo
+
+networks:
+  tris-net:
+    driver: bridge

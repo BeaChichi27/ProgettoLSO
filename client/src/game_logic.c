@@ -120,46 +120,71 @@ int game_is_board_full(const Game *game) {
     return 1;
 }
 
+// Sostituisci la funzione game_process_network_message in game_logic.c
+
 int game_process_network_message(Game *game, const char *message) {
     if (!game || !message) return 0;
+
+    printf("Processando messaggio: %s\n", message);
 
     if (strncmp(message, "MOVE:", 5) == 0) {
         // Formato: "MOVE:<row>,<col>:<symbol>"
         int row, col;
         char symbol;
         if (sscanf(message + 5, "%d,%d:%c", &row, &col, &symbol) == 3) {
+            printf("Mossa estratta: riga=%d, col=%d, simbolo=%c\n", row, col, symbol);
+            
             if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
+                // Aggiorna il board
                 game->board[row][col] = symbol;
+                printf("Board aggiornato alla posizione [%d][%d] = %c\n", row, col, symbol);
+                
+                // Controlla vincitore
                 game_check_winner(game);
+                
+                // Cambia turno solo se il gioco continua
                 if (game->state == GAME_STATE_PLAYING) {
                     game->current_player = (game->current_player == PLAYER_X) ? PLAYER_O : PLAYER_X;
+                    printf("Turno cambiato. Ora tocca a: %c\n", game->current_player);
                 }
+                
                 return 1;
+            } else {
+                printf("Coordinate non valide: row=%d, col=%d\n", row, col);
             }
+        } else {
+            printf("Formato messaggio MOVE non valido: %s\n", message);
         }
     }
-    else if (strcmp(message, "RESET") == 0) {
+    else if (strcmp(message, "GAME_RESET") == 0 || strcmp(message, "RESET") == 0) {
+        printf("Reset del gioco ricevuto\n");
         game_reset(game);
         return 1;
     }
     else if (strcmp(message, "REMATCH") == 0) {
+        printf("Richiesta rematch ricevuta\n");
         game->state = GAME_STATE_REMATCH;
         return 1;
     }
     else if (strncmp(message, "GAME_OVER:", 10) == 0) {
+        printf("Messaggio fine gioco ricevuto: %s\n", message);
+        
         if (strstr(message, "WINNER:")) {
             char winner;
             if (sscanf(message, "GAME_OVER:WINNER:%c", &winner) == 1) {
+                printf("Vincitore identificato: %c\n", winner);
                 game->winner = (PlayerSymbol)winner;
                 game->state = GAME_STATE_OVER;
                 return 1;
             }
         } else if (strstr(message, "DRAW")) {
+            printf("Pareggio identificato\n");
             game->is_draw = 1;
             game->state = GAME_STATE_OVER;
             return 1;
         }
     }
     
+    printf("Messaggio non riconosciuto: %s\n", message);
     return 0;
 }

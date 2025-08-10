@@ -1,6 +1,8 @@
 #ifndef SERVER_NETWORK_H
 #define SERVER_NETWORK_H
 
+#include <unistd.h>
+#include <sys/time.h>
 // Cross-platform includes
 #ifdef _WIN32
     #include <winsock2.h>
