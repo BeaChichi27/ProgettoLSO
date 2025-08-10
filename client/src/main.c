@@ -177,7 +177,7 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     PlayerSymbol assigned_symbol = PLAYER_NONE;
     char message[MAX_MSG_SIZE];
     int bytes;
-    
+
     // Richiedi la lista delle partite disponibili
     ui_show_message("Richiesta lista partite...");
     if (!network_send(conn, "LIST_GAMES", 0)) {
@@ -191,17 +191,17 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
         ui_show_error(network_get_error());
         return PLAYER_NONE;
     }
-    
+
     printf("Lista partite ricevuta: %s\n", message);
-    
+
     // Verifica che sia davvero una lista di partite
     if (!strstr(message, "GAMES:")) {
         ui_show_error("Risposta server non valida per lista partite");
         return PLAYER_NONE;
     }
-    
+
     ui_show_message(message);
-    
+
     // Ottieni l'ID della partita dall'utente
     printf("Inserisci ID partita (0 per annullare): ");
     char input[10];
@@ -209,13 +209,13 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
         ui_show_error("Errore lettura input");
         return PLAYER_NONE;
     }
-    
+
     int game_id = atoi(input);
     if (game_id == 0) {
         printf("Operazione annullata\n");
         return PLAYER_NONE;
     }
-    
+
     // Invia la richiesta di join
     char join_msg[20];
     snprintf(join_msg, sizeof(join_msg), "JOIN:%d", game_id);
@@ -226,27 +226,25 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     }
 
     printf("Richiesta inviata, in attesa di risposta...\n");
-    
-    // FIX: Loop per gestire tutte le possibili risposte
+
+    // Loop per gestire tutte le possibili risposte
     while (keep_running) {
         bytes = network_receive(conn, message, sizeof(message), 0);
         if (bytes <= 0) {
             ui_show_error("Errore ricezione risposta");
             return PLAYER_NONE;
         }
-        
+
         printf("Risposta ricevuta: %s\n", message);
-        
-        // FIX: Gestisci correttamente tutti i tipi di risposta
+
+        // Gestisci correttamente tutti i tipi di risposta
         if (strstr(message, "ERROR:")) {
             ui_show_error(message);
             return PLAYER_NONE;
-        }
-        else if (strstr(message, "JOIN_ACCEPTED")) {
+        } else if (strstr(message, "JOIN_ACCEPTED")) {
             printf("Join accettato! In attesa del messaggio GAME_START...\n");
-            continue; // Aspetta il GAME_START
-        }
-        else if (strstr(message, "GAME_START:")) {
+            // Non c'è bisogno di un continue qui, perché aspettiamo comunque il GAME_START
+        } else if (strstr(message, "GAME_START:")) {
             char symbol;
             if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
                 assigned_symbol = (PlayerSymbol)symbol;
@@ -254,28 +252,25 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
                 ui_show_message("Partita iniziata!");
                 return assigned_symbol;
             }
-        }
-        else if (strstr(message, "GAMES:")) {
-            // FIX: Se ricevi di nuovo la lista, significa che c'è stato un errore
+        } else if (strstr(message, "GAMES:")) {
+            // Se ricevi di nuovo la lista, significa che c'è stato un errore
             ui_show_error("Server ha inviato lista invece di risposta JOIN");
             return PLAYER_NONE;
-        }
-        else if (strcmp(message, "PING") == 0) {
+        } else if (strcmp(message, "PING") == 0) {
             network_send(conn, "PONG", 0);
-            continue;
-        }
-        else if (strstr(message, "OPPONENT_LEFT") || strstr(message, "GAME_CANCELLED")) {
+            // Non c'è bisogno di un continue qui, perché aspettiamo comunque le risposte
+        } else if (strstr(message, "OPPONENT_LEFT") || strstr(message, "GAME_CANCELLED")) {
             ui_show_error(message);
             return PLAYER_NONE;
-        }
-        else {
+        } else {
             printf("Messaggio non riconosciuto durante JOIN: %s\n", message);
-            continue; // Continua ad aspettare
+            // Non c'è bisogno di un continue qui, perché aspettiamo comunque le risposte
         }
     }
-    
+
     return PLAYER_NONE;
 }
+
 
 // Sostituisci completamente la funzione game_loop in main.c del client
 

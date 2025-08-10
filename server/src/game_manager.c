@@ -144,6 +144,21 @@ int game_join(Client *client, int game_id) {
     // Controlli iniziali e validazione
     if (!client) return 0;
 
+    if (client->game_id > 0) {
+        Game *current_game = game_find_by_id(client->game_id);
+        if (current_game) {
+            // Se sta cercando di unirsi alla stessa partita, invia un messaggio diverso
+            if (current_game->game_id == game_id) {
+                network_send_to_client(client, "ERROR:Sei già in questa partita");
+            } else {
+                network_send_to_client(client, "ERROR:Sei già in un'altra partita");
+            }
+        } else {
+            network_send_to_client(client, "ERROR:Sei già in una partita");
+        }
+        return 0;
+    }
+
     // FIX 1: Controlla se il client è già in una partita
     if (client->game_id > 0) {
         network_send_to_client(client, "ERROR:Sei già in una partita");
