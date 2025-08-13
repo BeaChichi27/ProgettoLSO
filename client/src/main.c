@@ -35,8 +35,6 @@ void get_board_position(int move, int* row, int* col) {
     *col = (move - 1) % 3;
 }
 
-// Sostituisci la funzione handle_create_game in main.c del client
-
 PlayerSymbol handle_create_game(NetworkConnection* conn) {
     PlayerSymbol assigned_symbol = PLAYER_NONE;
     char message[MAX_MSG_SIZE];
@@ -107,13 +105,14 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
                 
                 if (strstr(message, "OPPONENT_JOINED")) {
                     printf("Avversario si è unito!\n");
-                    continue;
+                    continue; // Aspetta GAME_START
                 }
                 else if (strstr(message, "GAME_START:")) {
                     char symbol;
                     if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
                         assigned_symbol = (PlayerSymbol)symbol;
                         printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
+                        ui_clear_screen();
                         ui_show_message("Avversario trovato! La partita inizia...");
                         game_started = 1;
                         break;
@@ -169,15 +168,11 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
     return assigned_symbol;
 }
 
-// Sostituisci la funzione handle_join_game in main.c del client
-
-// Fix per handle_join_game nel client - Sostituire completamente
-
 PlayerSymbol handle_join_game(NetworkConnection* conn) {
     PlayerSymbol assigned_symbol = PLAYER_NONE;
     char message[MAX_MSG_SIZE];
     int bytes;
-
+    
     // Richiedi la lista delle partite disponibili
     ui_show_message("Richiesta lista partite...");
     if (!network_send(conn, "LIST_GAMES", 0)) {
@@ -191,33 +186,42 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
         ui_show_error(network_get_error());
         return PLAYER_NONE;
     }
-
+    
     printf("Lista partite ricevuta: %s\n", message);
-
+    
     // Verifica che sia davvero una lista di partite
     if (!strstr(message, "GAMES:")) {
         ui_show_error("Risposta server non valida per lista partite");
         return PLAYER_NONE;
     }
-
+    
+    ui_clear_screen();
     ui_show_message(message);
-
+    
+    // Controlla se ci sono partite disponibili
+    if (strstr(message, "Nessuna partita disponibile")) {
+        ui_show_message("Nessuna partita disponibile al momento");
+        return PLAYER_NONE;
+    }
+    
     // Ottieni l'ID della partita dall'utente
-    printf("Inserisci ID partita (0 per annullare): ");
+    printf("\nInserisci ID partita (0 per annullare): ");
+    fflush(stdout);
+    
     char input[10];
     if (fgets(input, sizeof(input), stdin) == NULL) {
         ui_show_error("Errore lettura input");
         return PLAYER_NONE;
     }
-
+    
     int game_id = atoi(input);
     if (game_id == 0) {
         printf("Operazione annullata\n");
         return PLAYER_NONE;
     }
-
+    
     // Invia la richiesta di join
-    char join_msg[20];
+    char join_msg[32];
     snprintf(join_msg, sizeof(join_msg), "JOIN:%d", game_id);
     printf("Invio richiesta: %s\n", join_msg);
     if (!network_send(conn, join_msg, 0)) {
@@ -226,56 +230,69 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     }
 
     printf("Richiesta inviata, in attesa di risposta...\n");
-
+    ui_show_message("Connessione alla partita in corso...");
+    
     // Loop per gestire tutte le possibili risposte
+    time_t start_time = time(NULL);
     while (keep_running) {
+        // Timeout dopo 30 secondi
+        if (difftime(time(NULL), start_time) > 30) {
+            ui_show_error("Timeout: impossibile unirsi alla partita");
+            return PLAYER_NONE;
+        }
+        
         bytes = network_receive(conn, message, sizeof(message), 0);
         if (bytes <= 0) {
             ui_show_error("Errore ricezione risposta");
             return PLAYER_NONE;
         }
-
+        
         printf("Risposta ricevuta: %s\n", message);
-
-        // Gestisci correttamente tutti i tipi di risposta
+        
+        // Gestisci tutti i tipi di risposta
         if (strstr(message, "ERROR:")) {
             ui_show_error(message);
             return PLAYER_NONE;
-        } else if (strstr(message, "JOIN_ACCEPTED")) {
+        }
+        else if (strstr(message, "JOIN_ACCEPTED")) {
             printf("Join accettato! In attesa del messaggio GAME_START...\n");
-            // Non c'è bisogno di un continue qui, perché aspettiamo comunque il GAME_START
-        } else if (strstr(message, "GAME_START:")) {
+            ui_show_message("Unito alla partita! In attesa di inizio...");
+            continue; // Aspetta il GAME_START
+        }
+        else if (strstr(message, "GAME_START:")) {
             char symbol;
             if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
                 assigned_symbol = (PlayerSymbol)symbol;
                 printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
+                ui_clear_screen();
                 ui_show_message("Partita iniziata!");
                 return assigned_symbol;
             }
-        } else if (strstr(message, "GAMES:")) {
-            // Se ricevi di nuovo la lista, significa che c'è stato un errore
-            ui_show_error("Server ha inviato lista invece di risposta JOIN");
-            return PLAYER_NONE;
-        } else if (strcmp(message, "PING") == 0) {
+        }
+        else if (strcmp(message, "PING") == 0) {
             network_send(conn, "PONG", 0);
-            // Non c'è bisogno di un continue qui, perché aspettiamo comunque le risposte
-        } else if (strstr(message, "OPPONENT_LEFT") || strstr(message, "GAME_CANCELLED")) {
+            continue;
+        }
+        else if (strstr(message, "OPPONENT_LEFT") || strstr(message, "GAME_CANCELLED")) {
             ui_show_error(message);
             return PLAYER_NONE;
-        } else {
+        }
+        else {
             printf("Messaggio non riconosciuto durante JOIN: %s\n", message);
-            // Non c'è bisogno di un continue qui, perché aspettiamo comunque le risposte
+            continue; // Continua ad aspettare
         }
     }
-
+    
     return PLAYER_NONE;
 }
 
 
-// Sostituisci completamente la funzione game_loop in main.c del client
-
 void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) {
     printf("Iniziando game loop. Il tuo simbolo è: %c\n", player_symbol);
+    
+    // Inizializza il gioco
+    game->state = GAME_STATE_PLAYING;
+    game->current_player = PLAYER_X; // Il primo giocatore è sempre X
     
     while (keep_running && game->state != GAME_STATE_OVER) {
         ui_show_board(game->board);
@@ -304,12 +321,12 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                 continue;
             }
             
-            // Invia la mossa via TCP (non UDP)
+            // Invia la mossa via TCP
             char move_msg[32];
             snprintf(move_msg, sizeof(move_msg), "MOVE:%d,%d", row, col);
             printf("Invio mossa: %s\n", move_msg);
             
-            if (!network_send(conn, move_msg, 0)) {  // 0 = TCP, non UDP
+            if (!network_send(conn, move_msg, 0)) {
                 ui_show_error("Errore nell'invio della mossa");
                 keep_running = 0;
                 break;
@@ -319,7 +336,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
             
             // Attendi conferma o aggiornamento del gioco
             char message[MAX_MSG_SIZE];
-            int bytes = network_receive(conn, message, sizeof(message), 0);  // TCP
+            int bytes = network_receive(conn, message, sizeof(message), 0);
             
             if (bytes <= 0) {
                 ui_show_error("Errore ricezione risposta mossa");
@@ -372,7 +389,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
 
             if (select_result > 0 && FD_ISSET(conn->tcp_sock, &read_fds)) {
                 char message[MAX_MSG_SIZE];
-                int bytes = network_receive(conn, message, sizeof(message), 0);  // TCP
+                int bytes = network_receive(conn, message, sizeof(message), 0);
                 
                 if (bytes <= 0) {
                     ui_show_error("Connessione persa");
@@ -423,6 +440,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
         }
     }
     
+    // Mostra il risultato finale
     if (keep_running && game->state == GAME_STATE_OVER) {
         ui_show_board(game->board);
         
