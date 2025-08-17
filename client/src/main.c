@@ -22,11 +22,15 @@
 #include "headers/ui.h"
 #include "headers/network.h"
 
+#define MAX_NAME_LEN 50
+
 static volatile int keep_running = 1;
 
 // Aggiungi questo handler per SIGINT (Ctrl+C)
 void handle_sigint(int sig) {
     (void)sig; // Ignora il segnale
+    printf("\nRicevuto segnale di interruzione...\n");
+    // network_stop_receiver();  // Disabilitato temporaneamente
     keep_running = 0;
 }
 
@@ -47,32 +51,49 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
         return PLAYER_NONE;
     }
 
-    printf("Richiesta creazione partita inviata...\n");
+    printf("[DEBUG] Richiesta creazione partita inviata...\n");
+    fflush(stdout);
     
     // Ricevi la conferma di creazione
+    printf("[DEBUG] Attendo risposta GAME_CREATED...\n");
+    fflush(stdout);
     bytes = network_receive(conn, message, sizeof(message), 0);
     if (bytes <= 0) {
+        printf("[DEBUG] ERRORE: bytes ricevuti=%d\n", bytes);
         ui_show_error("Nessuna risposta dal server");
         return PLAYER_NONE;
     }
     
-    printf("Risposta server: %s\n", message);
+    printf("[DEBUG] Risposta server: %s\n", message);
+    fflush(stdout);
     
     if (!strstr(message, "GAME_CREATED:")) {
+        printf("[DEBUG] ERRORE: Messaggio non contiene GAME_CREATED: %s\n", message);
         ui_show_error("Errore creazione partita");
         return PLAYER_NONE;
     }
     
-    // Ricevi messaggio WAITING_OPPONENT
-    bytes = network_receive(conn, message, sizeof(message), 0);
-    if (bytes <= 0) {
-        ui_show_error("Errore ricezione stato attesa");
-        return PLAYER_NONE;
+    // Controlla se il messaggio contiene anche WAITING_OPPONENT
+    if (strstr(message, "WAITING_OPPONENT")) {
+        printf("[DEBUG] GAME_CREATED e WAITING_OPPONENT ricevuti insieme\n");
+        // Già abbiamo tutto quello che ci serve
+    } else {
+        // Ricevi messaggio WAITING_OPPONENT separato
+        printf("[DEBUG] Attendo messaggio WAITING_OPPONENT separato...\n");
+        fflush(stdout);
+        bytes = network_receive(conn, message, sizeof(message), 0);
+        if (bytes <= 0) {
+            printf("[DEBUG] ERRORE: bytes ricevuti per WAITING_OPPONENT=%d\n", bytes);
+            ui_show_error("Errore ricezione stato attesa");
+            return PLAYER_NONE;
+        }
+        
+        printf("[DEBUG] Stato attesa: %s\n", message);
+        fflush(stdout);
     }
-    
-    printf("Stato attesa: %s\n", message);
     ui_show_waiting_screen();
     
+retry_waiting:
     while (keep_running && !game_started) {
         // Controlla timeout (5 minuti)
         if (difftime(time(NULL), start_time) > 300) {
@@ -81,14 +102,35 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
             return PLAYER_NONE;
         }
         
+        // Controlla sempre se ci sono messaggi in attesa prima di fare select
+        fd_set pre_check;
+        FD_ZERO(&pre_check);
+        FD_SET(conn->tcp_sock, &pre_check);
+        struct timeval instant = {0, 0}; // Check immediato
+        
+#ifdef _WIN32
+        int pre_result = select(0, &pre_check, NULL, NULL, &instant);
+#else
+        int pre_result = select(conn->tcp_sock + 1, &pre_check, NULL, NULL, &instant);
+#endif
+        
+        if (pre_result > 0) {
+            printf(">>> MESSAGGIO IMMEDIATAMENTE DISPONIBILE!\n");
+            bytes = network_receive(conn, message, sizeof(message), 0);
+            if (bytes > 0) {
+                printf(">>> Messaggio ricevuto (pre-check): %s\n", message);
+                goto process_message;
+            }
+        }
+        
         // Configura select per controllare sia socket che input utente
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(conn->tcp_sock, &read_fds);
         
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;  // Timeout ancora più breve per massima reattività
+        tv.tv_usec = 100000; // 100ms
         
         int select_result;
 #ifdef _WIN32
@@ -101,30 +143,8 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
             bytes = network_receive(conn, message, sizeof(message), 0);
             
             if (bytes > 0) {
-                printf("Messaggio ricevuto durante attesa: %s\n", message);
-                
-                if (strstr(message, "OPPONENT_JOINED")) {
-                    printf("Avversario si è unito!\n");
-                    continue; // Aspetta GAME_START
-                }
-                else if (strstr(message, "GAME_START:")) {
-                    char symbol;
-                    if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
-                        assigned_symbol = (PlayerSymbol)symbol;
-                        printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
-                        ui_clear_screen();
-                        ui_show_message("Avversario trovato! La partita inizia...");
-                        game_started = 1;
-                        break;
-                    }
-                }
-                else if (strcmp(message, "PING") == 0) {
-                    network_send(conn, "PONG", 0);
-                }
-                else if (strstr(message, "ERROR:")) {
-                    ui_show_error(message);
-                    return PLAYER_NONE;
-                }
+                printf(">>> Messaggio ricevuto: %s\n", message);
+                goto process_message; // Vai alla sezione di processing
             }
             else if (bytes < 0) {
                 ui_show_error("Connessione con il server interrotta");
@@ -150,18 +170,103 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
             }
         }
         
-        // Aggiorna schermo di attesa periodicamente
+        // Aggiorna schermo di attesa periodicamente e controlla connessione
         static time_t last_update = 0;
         time_t now = time(NULL);
-        if (difftime(now, last_update) >= 5) {
+        if (difftime(now, last_update) >= 3) {
             ui_show_waiting_screen();
             printf("In attesa di avversario... (ESC per annullare)\n");
+            printf(">>> Controllo attivo messaggi dal server...\n");
             last_update = now;
+            
+            // Controllo aggiuntivo per messaggi in arrivo senza select
+            fd_set quick_check;
+            FD_ZERO(&quick_check);
+            FD_SET(conn->tcp_sock, &quick_check);
+            struct timeval quick_tv = {0, 0}; // Non-blocking
+            
+#ifdef _WIN32
+            int quick_result = select(0, &quick_check, NULL, NULL, &quick_tv);
+#else
+            int quick_result = select(conn->tcp_sock + 1, &quick_check, NULL, NULL, &quick_tv);
+#endif
+            if (quick_result > 0) {
+                printf(">>> MESSAGGIO DISPONIBILE! Leggendo...\n");
+                bytes = network_receive(conn, message, sizeof(message), 0);
+                if (bytes > 0) {
+                    printf(">>> Messaggio trovato nel controllo aggiuntivo: %s\n", message);
+                    goto process_message; // Vai alla sezione di processing
+                }
+            }
         }
     }
     
     if (!game_started) {
         ui_show_error("Partita non avviata");
+        return PLAYER_NONE;
+    }
+
+    return assigned_symbol;
+
+continue_waiting:
+    // Ritorna al loop di attesa
+    goto retry_waiting;
+
+process_message:
+    // Sezione per processare i messaggi ricevuti
+    if (strstr(message, "JOIN_REQUEST:")) {
+        // Richiesta di join da un altro giocatore
+        char player_name[MAX_NAME_LEN];
+        int game_id;
+        if (sscanf(message, "JOIN_REQUEST:%49[^:]:%d", player_name, &game_id) == 2) {
+            printf("\n=== RICHIESTA DI JOIN ===\n");
+            printf("Il giocatore '%s' vuole unirsi alla tua partita.\n", player_name);
+            printf("Accetti? (s/n): ");
+            fflush(stdout);
+            
+            char response;
+            scanf(" %c", &response);
+            
+            if (response == 's' || response == 'S') {
+                network_send(conn, "APPROVE:1", 0);
+                printf("Richiesta approvata. In attesa che il gioco inizi...\n");
+            } else {
+                network_send(conn, "APPROVE:0", 0);
+                printf("Richiesta rifiutata. In attesa di altri giocatori...\n");
+            }
+        }
+        // Torna al loop di attesa
+        goto continue_waiting;
+    }
+    else if (strstr(message, "JOIN_APPROVED_BY_YOU")) {
+        printf("Hai approvato il join. La partita sta iniziando...\n");
+        goto continue_waiting;
+    }
+    else if (strstr(message, "JOIN_REJECTED_BY_YOU")) {
+        printf("Hai rifiutato il join. In attesa di altri giocatori...\n");
+        goto continue_waiting;
+    }
+    else if (strstr(message, "JOIN_CANCELLED:")) {
+        printf("Il giocatore ha annullato la richiesta di join.\n");
+        goto continue_waiting;
+    }
+    else if (strstr(message, "OPPONENT_JOINED")) {
+        printf("Avversario si è unito!\n");
+        goto continue_waiting; // Aspetta GAME_START
+    }
+    else if (strstr(message, "GAME_START:")) {
+        char symbol;
+        if (sscanf(message, "GAME_START:%c", &symbol) == 1) {
+            assigned_symbol = (PlayerSymbol)symbol;
+            printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
+            ui_clear_screen();
+            ui_show_message("Avversario trovato! La partita inizia...");
+            game_started = 1;
+            return assigned_symbol;
+        }
+    }
+    else if (strstr(message, "ERROR:")) {
+        ui_show_error(message);
         return PLAYER_NONE;
     }
 
@@ -174,7 +279,7 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     int bytes;
     
     // Richiedi la lista delle partite disponibili
-    ui_show_message("Richiesta lista partite...");
+    printf("Richiesta lista partite...\n");
     if (!network_send(conn, "LIST_GAMES", 0)) {
         ui_show_error("Errore nell'invio richiesta lista partite");
         return PLAYER_NONE;
@@ -197,6 +302,37 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     
     ui_clear_screen();
     ui_show_message(message);
+
+    // Drena eventuali ulteriori risposte GAMES rimaste nel buffer prima del JOIN
+    {
+        fd_set read_fds;
+        struct timeval tv;
+        while (1) {
+            FD_ZERO(&read_fds);
+            FD_SET(conn->tcp_sock, &read_fds);
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000; // Wait 100ms for any pending messages
+#ifdef _WIN32
+            int sel = select(0, &read_fds, NULL, NULL, &tv);
+#else
+            int sel = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
+#endif
+            if (sel > 0 && FD_ISSET(conn->tcp_sock, &read_fds)) {
+                char tmp[MAX_MSG_SIZE];
+                int r = network_receive(conn, tmp, sizeof(tmp), 0);
+                if (r > 0) {
+                    if (strncmp(tmp, "GAMES:", 6) == 0) {
+                        printf("[DEBUG] Drained extra GAMES: %s\n", tmp);
+                        continue; // continua a drenare
+                    }
+                    // Ignore other unexpected messages (PONG already handled by network_receive)
+                    printf("[DEBUG] Ignoro messaggio inatteso prima del JOIN: %s\n", tmp);
+                    continue;
+                }
+            }
+            break; // nulla da drenare
+        }
+    }
     
     // Controlla se ci sono partite disponibili
     if (strstr(message, "Nessuna partita disponibile")) {
@@ -230,7 +366,7 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     }
 
     printf("Richiesta inviata, in attesa di risposta...\n");
-    ui_show_message("Connessione alla partita in corso...");
+    printf("Connessione alla partita in corso...\n");
     
     // Loop per gestire tutte le possibili risposte
     time_t start_time = time(NULL);
@@ -254,9 +390,31 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
             ui_show_error(message);
             return PLAYER_NONE;
         }
+        else if (strstr(message, "JOIN_PENDING:")) {
+            printf("Richiesta inviata al creatore. In attesa di approvazione...\n");
+            continue; // Aspetta la risposta del creatore
+        }
+        else if (strstr(message, "JOIN_APPROVED:")) {
+            char symbol;
+            if (sscanf(message, "JOIN_APPROVED:%c", &symbol) == 1) {
+                assigned_symbol = (PlayerSymbol)symbol;
+                printf("Join approvato! Il tuo simbolo è: %c\n", assigned_symbol);
+                printf("In attesa che la partita inizi...\n");
+                continue; // Aspetta GAME_START
+            }
+        }
+        else if (strstr(message, "JOIN_REJECTED:")) {
+            ui_show_error("La tua richiesta è stata rifiutata dal creatore");
+            return PLAYER_NONE;
+        }
+        else if (strncmp(message, "GAMES:", 6) == 0) {
+            // Potrebbe essere una lista rimasta nel buffer: ignorala
+            printf("[DEBUG] Ignoro GAMES arrivato dopo JOIN\n");
+            continue;
+        }
         else if (strstr(message, "JOIN_ACCEPTED")) {
             printf("Join accettato! In attesa del messaggio GAME_START...\n");
-            ui_show_message("Unito alla partita! In attesa di inizio...");
+            printf("Unito alla partita! In attesa di inizio...\n");
             continue; // Aspetta il GAME_START
         }
         else if (strstr(message, "GAME_START:")) {
@@ -265,7 +423,7 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
                 assigned_symbol = (PlayerSymbol)symbol;
                 printf("Partita iniziata! Il tuo simbolo è: %c\n", assigned_symbol);
                 ui_clear_screen();
-                ui_show_message("Partita iniziata!");
+                printf("Partita iniziata!\n");
                 return assigned_symbol;
             }
         }
@@ -358,6 +516,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                 } else {
                     printf("Errore nell'aggiornamento del board\n");
                 }
+                continue; // Torna al loop principale per mostrare il board aggiornato
             }
             else if (strstr(message, "GAME_OVER:")) {
                 if (game_process_network_message(game, message)) {
@@ -417,6 +576,32 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                     keep_running = 0;
                     break;
                 }
+                else if (strstr(message, "REMATCH_REQUEST:")) {
+                    printf("\n=== RICHIESTA REMATCH ===\n");
+                    printf("%s\n", message);
+                    printf("Accetti di giocare un'altra partita? (s/n): ");
+                    fflush(stdout);
+                    
+                    char response;
+                    scanf(" %c", &response);
+                    
+                    if (response == 's' || response == 'S') {
+                        network_request_rematch(conn);
+                        printf("Rematch accettato! Aspettando inizio nuova partita...\n");
+                    } else {
+                        printf("Rematch rifiutato.\n");
+                    }
+                }
+                else if (strstr(message, "REMATCH_ACCEPTED:")) {
+                    printf("Rematch accettato da entrambi! Nuova partita inizia...\n");
+                    // Reset del gioco locale
+                    game_init_board(game);
+                    game->state = GAME_STATE_PLAYING;
+                    game->current_player = PLAYER_X;
+                    game->winner = PLAYER_NONE;
+                    game->is_draw = 0;
+                    continue; // Continua il game loop
+                }
                 else if (strcmp(message, "PING") == 0) {
                     network_send(conn, "PONG", 0);
                 }
@@ -455,6 +640,51 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
             printf("%s\n", msg);
         } else if (game->is_draw) {
             ui_show_message("PAREGGIO!");
+        }
+        
+        // Offri opzione rematch
+        printf("\nVuoi giocare un'altra partita? (s/n): ");
+        fflush(stdout);
+        
+        char response;
+        scanf(" %c", &response);
+        
+        if (response == 's' || response == 'S') {
+            printf("Richiedendo rematch...\n");
+            if (network_request_rematch(conn)) {
+                printf("Richiesta rematch inviata. In attesa dell'avversario...\n");
+                
+                // Aspetta la risposta del rematch
+                char message[MAX_MSG_SIZE];
+                int bytes = network_receive(conn, message, sizeof(message), 0);
+                
+                if (bytes > 0) {
+                    if (strstr(message, "REMATCH_ACCEPTED:")) {
+                        printf("Rematch accettato! Nuova partita...\n");
+                        // Continua con la nuova partita
+                        game->state = GAME_STATE_PLAYING;
+                        return; // Torna al game loop
+                    } else if (strstr(message, "REMATCH_REQUEST:")) {
+                        printf("L'avversario ha richiesto un rematch.\n");
+                        printf("Accetti? (s/n): ");
+                        scanf(" %c", &response);
+                        
+                        if (response == 's' || response == 'S') {
+                            network_request_rematch(conn);
+                            printf("Rematch accettato! Nuova partita...\n");
+                            game->state = GAME_STATE_PLAYING;
+                            return;
+                        } else {
+                            printf("Rematch rifiutato.\n");
+                        }
+                    } else if (strstr(message, "REMATCH_SENT:")) {
+                        printf("In attesa che l'avversario risponda...\n");
+                        // Continua ad aspettare
+                    }
+                }
+            } else {
+                ui_show_error("Errore nell'invio richiesta rematch");
+            }
         }
     }
 }
@@ -496,8 +726,16 @@ int main() {
     printf("\nRegistrazione completata come %s\n", player_name);
     sleep(1);
 
-    // Avvia keep-alive dopo la registrazione
-    network_start_keep_alive(&conn);
+    // TEMPORANEAMENTE DISABILITIAMO IL THREAD RECEIVER
+    // if (!network_start_receiver_thread(&conn)) {
+    //     ui_show_error("Errore avvio thread receiver");
+    //     network_disconnect(&conn);
+    //     network_global_cleanup();
+    //     return 1;
+    // }
+
+    // DISABILITIAMO IL KEEP-ALIVE AUTOMATICO
+    // network_start_keep_alive(&conn);
 
     while (keep_running) {
         int choice = ui_show_main_menu();
@@ -564,6 +802,8 @@ int main() {
             }
                 
             case 3:  // Esci
+                printf("Uscita in corso...\n");
+                // network_stop_receiver();  // Disabilitato temporaneamente
                 keep_running = 0;
                 break;
                 
@@ -573,6 +813,7 @@ int main() {
         }
     }
 
+    // Cleanup semplificato senza thread receiver
     network_stop_keep_alive(&conn);
     network_disconnect(&conn);
     network_global_cleanup();

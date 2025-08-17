@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -42,14 +43,23 @@ void setup_signal_handlers() {
 }
 #else
 void signal_handler(int sig) {
-    printf("\nRicevuto segnale di chiusura, spegnimento server...\n");
+    printf("\nRicevuto segnale %d, spegnimento server...\n", sig);
     server_running = 0;
     network_shutdown(&server);
+    
+    // Se ricevuto due volte, forza l'uscita
+    static int signal_count = 0;
+    signal_count++;
+    if (signal_count >= 2) {
+        printf("Secondo segnale ricevuto, uscita forzata\n");
+        exit(1);
+    }
 }
 
 void setup_signal_handlers() {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    signal(SIGPIPE, SIG_IGN); // Ignora SIGPIPE per socket chiusi
 }
 #endif
 
@@ -92,39 +102,61 @@ int main() {
     printf("Premere Ctrl+C per fermare il server\n\n");
     
     while (server_running) {
-        Client *new_client = network_accept_client(&server);
-        if (!new_client) {
-            if (server_running) {
-                // CAMBIATO: Sleep cross-platform
-#ifdef _WIN32
-                Sleep(100);
-#else
-                usleep(100000); // 100ms
-#endif
-            }
-            continue;
-        }
+        // Usa select per rendere accept non-bloccante
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(server.tcp_socket, &read_fds);
         
-        // CAMBIATO: Creazione thread cross-platform
+        struct timeval tv;
+        tv.tv_sec = 1;  // Timeout di 1 secondo
+        tv.tv_usec = 0;
+        
+        int select_result = select(server.tcp_socket + 1, &read_fds, NULL, NULL, &tv);
+        
+        if (!server_running) break;  // Check dopo ogni operazione bloccante
+        
+        if (select_result > 0 && FD_ISSET(server.tcp_socket, &read_fds)) {
+            Client *new_client = network_accept_client(&server);
+            if (!new_client) {
+                if (server_running) {
+                    printf("Errore accept client\n");
+                }
+                continue;
+            }
+            
+            if (!server_running) {
+                closesocket(new_client->client_fd);
+                free(new_client);
+                break;
+            }
+            
+            // CAMBIATO: Creazione thread cross-platform
 #ifdef _WIN32
-        new_client->thread = CreateThread(NULL, 0, network_handle_client_thread, 
-                                         new_client, 0, NULL);
-        if (new_client->thread == NULL) {
-            printf("Errore creazione thread client: %lu\n", GetLastError());
-            closesocket(new_client->client_fd);
-            free(new_client);
-            continue;
-        }
-        CloseHandle(new_client->thread);
+            new_client->thread = CreateThread(NULL, 0, network_handle_client_thread, 
+                                             new_client, 0, NULL);
+            if (new_client->thread == NULL) {
+                printf("Errore creazione thread client: %lu\n", GetLastError());
+                closesocket(new_client->client_fd);
+                free(new_client);
+                continue;
+            }
+            CloseHandle(new_client->thread);
 #else
-        if (pthread_create(&new_client->thread, NULL, network_handle_client_thread, new_client) != 0) {
-            printf("Errore creazione thread client: %s\n", strerror(errno));
-            closesocket(new_client->client_fd);
-            free(new_client);
-            continue;
-        }
-        pthread_detach(new_client->thread);
+            if (pthread_create(&new_client->thread, NULL, network_handle_client_thread, new_client) != 0) {
+                printf("Errore creazione thread client: %s\n", strerror(errno));
+                closesocket(new_client->client_fd);
+                free(new_client);
+                continue;
+            }
+            pthread_detach(new_client->thread);
 #endif
+        }
+        else if (select_result == -1) {
+            if (!server_running) break;
+            printf("Errore select: %s\n", strerror(errno));
+            break;
+        }
+        // Se select_result == 0 (timeout), continua il loop per controllare server_running
     }
     
     printf("Pulizia in corso...\n");

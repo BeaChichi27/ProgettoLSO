@@ -178,7 +178,7 @@ thread_return_t network_handle_udp_thread(thread_param_t arg) {
     ServerNetwork *server = (ServerNetwork*)arg;
     char buffer[MAX_MSG_SIZE];
     struct sockaddr_in client_addr;
-    int addr_len = sizeof(client_addr);
+    socklen_t addr_len = sizeof(client_addr);
     
     printf("Thread UDP avviato\n");
     
@@ -415,7 +415,7 @@ void network_shutdown(ServerNetwork *server) {
 
 Client* network_accept_client(ServerNetwork *server) {
     struct sockaddr_in client_addr;
-    int client_len = sizeof(client_addr);
+    socklen_t client_len = sizeof(client_addr);
     
     socket_t client_fd = accept(server->tcp_socket, (struct sockaddr*)&client_addr, &client_len);
     if (client_fd == INVALID_SOCKET_VALUE) {

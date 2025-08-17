@@ -17,6 +17,14 @@ void game_init(Game *game) {
     game->is_draw = 0;
 }
 
+void game_init_board(Game *game) {
+    for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int j = 0; j < BOARD_SIZE; j++) {
+            game->board[i][j] = PLAYER_NONE;
+        }
+    }
+}
+
 int game_make_move(Game *game, int row, int col) {
     if (!game_is_valid_move(game, row, col)) {
         return 0;

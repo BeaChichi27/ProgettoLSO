@@ -25,6 +25,7 @@ typedef struct {
 } Game;
 
 void game_init(Game *game);
+void game_init_board(Game *game);
 
 int game_make_move(Game *game, int row, int col);
 int game_is_valid_move(const Game *game, int row, int col);

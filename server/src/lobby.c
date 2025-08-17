@@ -129,6 +129,22 @@ void lobby_broadcast_message(const char *message, Client *exclude) {
     mutex_unlock(&lobby_mutex);
 }
 
+void lobby_broadcast_game_list() {
+    char game_list[MAX_MSG_SIZE];
+    game_list_available(game_list, sizeof(game_list));
+    
+    // Broadcast solo ai client che non sono in partita
+    mutex_lock(&lobby_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] && clients[i]->is_active && clients[i]->game_id <= 0) {
+            network_send_to_client(clients[i], game_list);
+        }
+    }
+    mutex_unlock(&lobby_mutex);
+    
+    printf("Lista giochi aggiornata e inviata a tutti i client liberi\n");
+}
+
 // Sostituisci la funzione lobby_handle_client_message in lobby.c
 
 // Fix per lobby_handle_client_message - Sostituire completamente
@@ -152,6 +168,9 @@ void lobby_handle_client_message(Client *client, const char *message) {
             network_send_to_client(client, response);
             network_send_to_client(client, "WAITING_OPPONENT");
             printf("Client %s ha creato partita %d\n", client->name, game_id);
+            
+            // Broadcast della nuova partita disponibile
+            lobby_broadcast_game_list();
         } else {
             network_send_to_client(client, "ERROR:Impossibile creare partita");
         }
@@ -186,10 +205,15 @@ void lobby_handle_client_message(Client *client, const char *message) {
         network_send_to_client(client, "LEFT_GAME");
     } 
     else if (strncmp(message, "REMATCH", 7) == 0) {
-        if (client->game_id > 0) {
-            game_reset(client->game_id);
-        } else {
-            network_send_to_client(client, "ERROR:Non sei in una partita");
+        if (!game_request_rematch(client)) {
+            // game_request_rematch già invia il messaggio di errore appropriato
+            printf("Rematch fallito per %s\n", client->name);
+        }
+    }
+    else if (strncmp(message, "APPROVE:", 8) == 0) {
+        int approve = atoi(message + 8); // 1 per approvare, 0 per rifiutare
+        if (!game_approve_join(client, approve)) {
+            printf("Approvazione fallita per %s\n", client->name);
         }
     } 
     else if (strncmp(message, "CANCEL", 6) == 0) {
@@ -200,6 +224,10 @@ void lobby_handle_client_message(Client *client, const char *message) {
             network_send_to_client(client, "ERROR:Non sei in una partita");
         }
     } 
+    else if (strncmp(message, "PING", 4) == 0) {
+        // Handle PING with PONG response (usando strncmp per gestire eventuali caratteri extra)
+        network_send_to_client(client, "PONG");
+    }
     else {
         printf("Comando sconosciuto da %s: %s\n", client->name, message);
         network_send_to_client(client, "ERROR:Comando sconosciuto");
@@ -233,4 +261,13 @@ int lobby_add_client_reference(Client *client) {
     mutex_unlock(mutex);
     printf("ERRORE: Lobby piena, impossibile aggiungere client FD:%d\n", (int)client->client_fd);
     return 0; 
+}
+
+void lobby_handle_approve_join(Client *client, const char *message) {
+    if (!client || !message) return;
+    
+    int approve = atoi(message);
+    if (!game_approve_join(client, approve)) {
+        printf("Approvazione fallita per %s\n", client->name);
+    }
 }
