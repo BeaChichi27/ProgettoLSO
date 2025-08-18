@@ -499,10 +499,10 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     
     // Timeout più lungo per evitare disconnessioni premature
 #ifdef _WIN32
-    DWORD timeout_ms = 30000; // 30 secondi
+    DWORD timeout_ms = 600000; // 10 minuti
     setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout_ms, sizeof(timeout_ms));
 #else
-    struct timeval timeout = { .tv_sec = 30, .tv_usec = 0 }; // 30 secondi
+    struct timeval timeout = { .tv_sec = 600, .tv_usec = 0 }; // 10 minuti
     setsockopt(client->client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 #endif
     

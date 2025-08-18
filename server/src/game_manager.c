@@ -423,6 +423,8 @@ int game_make_move(int game_id, Client *client, int row, int col) {
         network_send_to_client(game->player1, msg);
         network_send_to_client(game->player2, msg);
         printf("Partita %d terminata - Vincitore: %c\n", game_id, winner);
+        
+        // NON resettare game_id subito - servirà per il rematch
     }
     else if (game_is_board_full(game)) {
         game->state = GAME_STATE_OVER;
@@ -430,6 +432,8 @@ int game_make_move(int game_id, Client *client, int row, int col) {
         network_send_to_client(game->player1, "GAME_OVER:DRAW");
         network_send_to_client(game->player2, "GAME_OVER:DRAW");
         printf("Partita %d terminata - Pareggio\n", game_id);
+        
+        // NON resettare game_id subito - servirà per il rematch
     }
     else {
         game->current_player = (game->current_player == PLAYER_X) ? PLAYER_O : PLAYER_X;
@@ -535,7 +539,7 @@ int game_request_rematch(Client *client) {
     }
     
     Game *game = game_find_by_id(client->game_id);
-    if (!game || game->state != GAME_STATE_OVER) {
+    if (!game || (game->state != GAME_STATE_OVER && game->state != GAME_STATE_REMATCH_REQUESTED)) {
         network_send_to_client(client, "ERROR:La partita non è terminata");
         return 0;
     }

@@ -155,10 +155,17 @@ void lobby_handle_client_message(Client *client, const char *message) {
     printf("Elaborando messaggio: %s da %s\n", message, client->name);
     
     if (strncmp(message, "CREATE_GAME", 11) == 0) {
-        // FIX: Controlla se già in partita prima di creare
+        // Controlla se già in partita ATTIVA prima di creare
         if (client->game_id > 0) {
-            network_send_to_client(client, "ERROR:Sei già in una partita");
-            return;
+            Game *current_game = game_find_by_id(client->game_id);
+            if (current_game && current_game->state != GAME_STATE_OVER) {
+                network_send_to_client(client, "ERROR:Sei già in una partita");
+                return;
+            }
+            // Se la partita è terminata, resetta il game_id del client
+            if (current_game && current_game->state == GAME_STATE_OVER) {
+                client->game_id = -1;
+            }
         }
         
         int game_id = game_create_new(client);
