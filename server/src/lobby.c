@@ -217,6 +217,11 @@ void lobby_handle_client_message(Client *client, const char *message) {
             printf("Rematch fallito per %s\n", client->name);
         }
     }
+    else if (strncmp(message, "REMATCH_DECLINE", 15) == 0) {
+        if (!game_decline_rematch(client)) {
+            printf("Decline rematch fallito per %s\n", client->name);
+        }
+    }
     else if (strncmp(message, "APPROVE:", 8) == 0) {
         int approve = atoi(message + 8); // 1 per approvare, 0 per rifiutare
         if (!game_approve_join(client, approve)) {

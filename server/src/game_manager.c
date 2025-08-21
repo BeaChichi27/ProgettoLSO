@@ -540,7 +540,7 @@ int game_request_rematch(Client *client) {
     
     Game *game = game_find_by_id(client->game_id);
     if (!game || (game->state != GAME_STATE_OVER && game->state != GAME_STATE_REMATCH_REQUESTED)) {
-        network_send_to_client(client, "ERROR:La partita non è terminata");
+        network_send_to_client(client, "ERROR:La partita non è terminata o non disponibile per rematch");
         return 0;
     }
     
@@ -598,6 +598,92 @@ int game_request_rematch(Client *client) {
         
         printf("Client %s ha richiesto rematch per partita %d\n", client->name, game->game_id);
     }
+    
+    mutex_unlock(&game->mutex);
+    return 1;
+}
+
+int game_cancel_rematch(Client *client) {
+    if (!client || client->game_id <= 0) {
+        network_send_to_client(client, "ERROR:Non sei in una partita");
+        return 0;
+    }
+    
+    Game *game = game_find_by_id(client->game_id);
+    if (!game) {
+        network_send_to_client(client, "ERROR:Partita non trovata");
+        return 0;
+    }
+    
+    mutex_lock(&game->mutex);
+    
+    // Ottiene l'avversario
+    Client *opponent = NULL;
+    if (game->player1 == client) {
+        opponent = game->player2;
+    } else if (game->player2 == client) {
+        opponent = game->player1;
+    } else {
+        mutex_unlock(&game->mutex);
+        network_send_to_client(client, "ERROR:Non fai parte di questa partita");
+        return 0;
+    }
+    
+    // Avvisa l'avversario che la rivincita è stata annullata
+    if (opponent) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "REMATCH_CANCELLED:%s ha deciso di fare una nuova partita", client->name);
+        network_send_to_client(opponent, msg);
+    }
+    
+    // Reset della partita - pulizia completa
+    game->rematch_requests = 0;
+    game->state = GAME_STATE_OVER;  // Torna allo stato di terminata
+    
+    // Notifica che il rematch è stato cancellato
+    printf("Client %s ha cancellato la rivincita per partita %d\n", client->name, game->game_id);
+    
+    mutex_unlock(&game->mutex);
+    return 1;
+}
+
+int game_decline_rematch(Client *client) {
+    if (!client || client->game_id <= 0) {
+        network_send_to_client(client, "ERROR:Non sei in una partita");
+        return 0;
+    }
+    
+    Game *game = game_find_by_id(client->game_id);
+    if (!game) {
+        network_send_to_client(client, "ERROR:Partita non trovata");
+        return 0;
+    }
+    
+    mutex_lock(&game->mutex);
+    
+    // Ottiene l'avversario
+    Client *opponent = NULL;
+    if (game->player1 == client) {
+        opponent = game->player2;
+    } else if (game->player2 == client) {
+        opponent = game->player1;
+    } else {
+        mutex_unlock(&game->mutex);
+        network_send_to_client(client, "ERROR:Non fai parte di questa partita");
+        return 0;
+    }
+    
+    // Cancella TUTTE le richieste di rematch in corso
+    game->rematch_requests = 0;
+    game->state = GAME_STATE_OVER;
+    
+    // Avvisa l'avversario che il rematch è stato rifiutato
+    if (opponent) {
+        network_send_to_client(opponent, "REMATCH_DECLINED:L'avversario ha rifiutato l'altra partita");
+    }
+    
+    // Notifica che il rematch è stato rifiutato
+    printf("Client %s ha rifiutato la rivincita per partita %d - cancellate tutte le richieste\n", client->name, game->game_id);
     
     mutex_unlock(&game->mutex);
     return 1;

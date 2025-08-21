@@ -416,6 +416,37 @@ int network_send_move(NetworkConnection *conn, int move) {
     return 1;
 }
 
+// Svuota il buffer di ricezione
+int network_flush_receive_buffer(NetworkConnection *conn) {
+    if (conn->tcp_sock == INVALID_SOCKET_VALUE) {
+        set_error("Connessione non inizializzata");
+        return -1;
+    }
+
+    // Imposta socket non bloccante temporaneamente
+    int flags = fcntl(conn->tcp_sock, F_GETFL, 0);
+    fcntl(conn->tcp_sock, F_SETFL, flags | O_NONBLOCK);
+    
+    char temp_buffer[1024];
+    int total_flushed = 0;
+    int bytes_read;
+    
+    // Leggi tutto ciò che è disponibile
+    do {
+        bytes_read = recv(conn->tcp_sock, temp_buffer, sizeof(temp_buffer), 0);
+        if (bytes_read > 0) {
+            total_flushed += bytes_read;
+            temp_buffer[bytes_read] = '\0';
+            printf("[DEBUG] Drained extra data: %s\n", temp_buffer);
+        }
+    } while (bytes_read > 0);
+    
+    // Ripristina il socket bloccante
+    fcntl(conn->tcp_sock, F_SETFL, flags);
+    
+    return total_flushed;
+}
+
 int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int use_udp) {
     if (!conn || !buffer || buf_size <= 0) {
         set_error("Parametri non validi");

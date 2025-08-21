@@ -50,6 +50,8 @@ int game_create_new(Client *creator);
 int game_join(Client *client, int game_id);
 int game_approve_join(Client *creator, int approve);
 int game_request_rematch(Client *client);
+int game_cancel_rematch(Client *client); // Aggiunta nuova funzione
+int game_decline_rematch(Client *client); // Rifiuta il rematch
 void game_leave(Client *client);
 
 int game_make_move(int game_id, Client *client, int row, int col);

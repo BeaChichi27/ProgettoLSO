@@ -70,6 +70,7 @@ int network_approve_join(NetworkConnection *conn, int approve);
 
 int network_send(NetworkConnection *conn, const char *message, int use_udp);
 int network_receive(NetworkConnection *conn, char *buffer, size_t buf_size, int use_udp);
+int network_flush_receive_buffer(NetworkConnection *conn);
 
 const char *network_get_error();
 

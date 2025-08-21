@@ -43,17 +43,18 @@ void setup_signal_handlers() {
 }
 #else
 void signal_handler(int sig) {
-    printf("\nRicevuto segnale %d, spegnimento server...\n", sig);
-    server_running = 0;
-    network_shutdown(&server);
+    static int shutdown_in_progress = 0;
     
-    // Se ricevuto due volte, forza l'uscita
-    static int signal_count = 0;
-    signal_count++;
-    if (signal_count >= 2) {
-        printf("Secondo segnale ricevuto, uscita forzata\n");
+    if (shutdown_in_progress) {
+        printf("\nSecondo segnale ricevuto, uscita forzata\n");
         exit(1);
     }
+    
+    shutdown_in_progress = 1;
+    printf("\nRicevuto segnale %d, spegnimento server...\n", sig);
+    server_running = 0;
+    
+    // Non chiamare network_shutdown qui - lascia che il main loop lo faccia
 }
 
 void setup_signal_handlers() {
@@ -130,7 +131,7 @@ int main() {
                 break;
             }
             
-            // CAMBIATO: Creazione thread cross-platform
+            // Creazione thread con gestione errori migliorata
 #ifdef _WIN32
             new_client->thread = CreateThread(NULL, 0, network_handle_client_thread, 
                                              new_client, 0, NULL);
@@ -153,16 +154,18 @@ int main() {
         }
         else if (select_result == -1) {
             if (!server_running) break;
+            if (errno == EINTR) continue;  // Interrotto da signal, continua
             printf("Errore select: %s\n", strerror(errno));
             break;
         }
         // Se select_result == 0 (timeout), continua il loop per controllare server_running
     }
     
+    printf("Iniziando spegnimento server...\n");
+    network_shutdown(&server);
     printf("Pulizia in corso...\n");
     game_manager_cleanup();
     lobby_cleanup();
-    network_shutdown(&server);
-    printf("Server spento correttamente\n");
+    printf("Server spento completamente\n");
     return 0;
 }

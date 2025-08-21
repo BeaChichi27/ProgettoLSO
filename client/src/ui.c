@@ -116,22 +116,6 @@ void ui_show_error(const char *error) {
     getch();
 }
 
-int ui_ask_rematch() {
-    printf("\nVuoi fare una rivincita? (s/n): ");
-    
-    while (1) {
-        char input = getch();
-        if (input == 's' || input == 'S') {
-            printf("s\n");
-            return 1;
-        }
-        if (input == 'n' || input == 'N') {
-            printf("n\n");
-            return 0;
-        }
-    }
-}
-
 int ui_get_player_name(char *name, int max_length) {
     ui_clear_screen();
     printf("\nInserisci il tuo nome (max %d caratteri): ", max_length - 1);

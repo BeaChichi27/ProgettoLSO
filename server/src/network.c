@@ -562,11 +562,15 @@ thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
         bytes = network_receive_from_client(client, buffer, sizeof(buffer));
         
         if (bytes <= 0) {
-            printf("Client %s disconnesso (bytes: %d)\n", client->name, bytes);
+            if (bytes == 0) {
+                printf("Client %s si è disconnesso correttamente\n", client->name);
+            } else {
+                printf("Client %s disconnesso (errore: %d)\n", client->name, bytes);
+            }
             break;
         }
         
-        printf("Gestendo messaggio da %s: %s\n", client->name, buffer);
+        printf("TCP <- %s: %s\n", client->name, buffer);
         
         // FIX PRINCIPALE: Gestisci i messaggi di registrazione qui
         if (strncmp(buffer, "REGISTER:", 9) == 0) {
