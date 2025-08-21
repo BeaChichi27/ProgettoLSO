@@ -177,6 +177,13 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                             rematch_handled = 1;
                             return 0; // Esce dal gioco - errore
                         }
+                        else if (strstr(message, "SERVER_SHUTDOWN:")) {
+                            printf("Server in spegnimento: %s\n", message + 16);
+                            printf("Connessione interrotta.\n");
+                            keep_running = 0; // Termina completamente il client
+                            rematch_handled = 1;
+                            return 0;
+                        }
                     }
                     else {
                         sleep(1); // Aspetta 1 secondo prima di riprovare
@@ -450,6 +457,11 @@ process_message:
         ui_show_error(message);
         return PLAYER_NONE;
     }
+    else if (strstr(message, "SERVER_SHUTDOWN:")) {
+        printf("Server in spegnimento: %s\n", message + 16);
+        keep_running = 0;
+        return PLAYER_NONE;
+    }
 
     return assigned_symbol;
 }
@@ -577,6 +589,11 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
             ui_show_error(message);
             return PLAYER_NONE;
         }
+        else if (strstr(message, "SERVER_SHUTDOWN:")) {
+            printf("Server in spegnimento: %s\n", message + 16);
+            keep_running = 0;
+            return PLAYER_NONE;
+        }
         else if (strstr(message, "JOIN_PENDING:")) {
             printf("Richiesta inviata al creatore. In attesa di approvazione...\n");
             continue; // Aspetta la risposta del creatore
@@ -639,7 +656,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
     game->state = GAME_STATE_PLAYING;
     game->current_player = PLAYER_X; // Il primo giocatore è sempre X
     
-    while (keep_running && game->state == GAME_STATE_PLAYING) {
+    while (keep_running && game->state != GAME_STATE_OVER) {
         ui_show_board(game->board);
         
         // Determina di chi è il turno
@@ -736,17 +753,10 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                         else if (strstr(extra_msg, "GAME_OVER:")) {
                             if (game_process_network_message(game, extra_msg)) {
                                 printf("Partita terminata!\n");
-                                int rematch_result = handle_game_end(conn, game, player_symbol);
-                                if (rematch_result == 1) {
-                                    // Rematch accettato, continua il game loop con la nuova partita
-                                    printf("Continuando con la nuova partita...\n");
-                                    game->state = GAME_STATE_PLAYING; // Assicura che il loop continui
-                                    continue;
-                                } else {
-                                    // Rematch rifiutato o errore, termina il game loop
-                                    game->state = GAME_STATE_OVER;
-                                    return;
+                                if (!handle_game_end(conn, game, player_symbol)) {
+                                    game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                                 }
+                                return;
                             }
                         }
                     }
@@ -756,17 +766,10 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
             else if (strstr(message, "GAME_OVER:")) {
                 if (game_process_network_message(game, message)) {
                     printf("Partita terminata!\n");
-                    int rematch_result = handle_game_end(conn, game, player_symbol);
-                    if (rematch_result == 1) {
-                        // Rematch accettato, continua il game loop con la nuova partita
-                        printf("Continuando con la nuova partita...\n");
-                        game->state = GAME_STATE_PLAYING; // Assicura che il loop continui
-                        continue;
-                    } else {
-                        // Rematch rifiutato o errore, termina il game loop
-                        game->state = GAME_STATE_OVER;
-                        return;
+                    if (!handle_game_end(conn, game, player_symbol)) {
+                        game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                     }
+                    return; // Esce dalla funzione dopo aver gestito il rematch
                 }
             }
             else if (strstr(message, "ERROR:")) {
@@ -817,9 +820,10 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                         break;
                     }
                     
+                    printf("Messaggio ricevuto durante attesa: %s\n", message);
+                    
                     if (strstr(message, "MOVE:")) {
                         // L'avversario ha fatto una mossa
-                        printf("Mossa ricevuta: %s\n", message);
                         if (game_process_network_message(game, message)) {
                             ui_show_board(game->board);
                             printf("Mossa avversario processata\n");
@@ -829,17 +833,10 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                     else if (strstr(message, "GAME_OVER:")) {
                         if (game_process_network_message(game, message)) {
                             printf("Partita terminata!\n");
-                            int rematch_result = handle_game_end(conn, game, player_symbol);
-                            if (rematch_result == 1) {
-                                // Rematch accettato, continua il game loop con la nuova partita
-                                printf("Continuando con la nuova partita...\n");
-                                game->state = GAME_STATE_PLAYING; // Assicura che il loop continui
-                                break; // Esce dal loop di attesa per ricominciare il game loop
-                            } else {
-                                // Rematch rifiutato o errore, termina il game loop
-                                game->state = GAME_STATE_OVER;
-                                return;
+                            if (!handle_game_end(conn, game, player_symbol)) {
+                                game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                             }
+                            return; // Esce dalla funzione
                         }
                     }
                     else if (strstr(message, "OPPONENT_LEFT")) {
@@ -850,17 +847,6 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                     else if (strcmp(message, "PING") == 0) {
                         network_send(conn, "PONG", 0);
                         continue; // Continua ad aspettare
-                    }
-                    else if (strstr(message, "ERROR:")) {
-                        // Gestisci diversi tipi di errori
-                        if (strstr(message, "La partita non è terminata")) {
-                            // Errore di sincronizzazione temporaneo - ignora silenziosamente
-                            continue;
-                        } else {
-                            // Altri errori più importanti - mostra all'utente
-                            printf("Errore ricevuto: %s\n", message);
-                        }
-                        continue;
                     }
                     else if (strstr(message, "REMATCH_ACCEPTED:")) {
                         printf("Rematch accettato da entrambi! Nuova partita inizia...\n");
@@ -884,19 +870,8 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                         printf("Nuova partita iniziata! Il tuo simbolo: %c\n", player_symbol);
                         break; // Esce per ricominciare il game loop
                     }
-                    else if (strstr(message, "ERROR:")) {
-                        // Gestisci diversi tipi di errori
-                        if (strstr(message, "La partita non è terminata")) {
-                            // Errore di sincronizzazione temporaneo - ignora silenziosamente
-                            continue;
-                        } else {
-                            // Altri errori più importanti - mostra all'utente
-                            printf("Errore ricevuto: %s\n", message);
-                        }
-                        continue;
-                    }
                     else {
-                        // Messaggio sconosciuto - log solo per debug se necessario
+                        printf("Messaggio non gestito durante attesa: %s\n", message);
                         continue;
                     }
                 }

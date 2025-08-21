@@ -23,13 +23,35 @@ int lobby_init() {
 
 void lobby_cleanup() {
     mutex_lock(&lobby_mutex);
+    printf("Disconnettendo tutti i client prima dello shutdown...\n");
+    
     for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] && clients[i]->is_active) {
+            // Invia un messaggio di disconnessione al client
+            network_send_to_client(clients[i], "SERVER_SHUTDOWN:Server in spegnimento");
+            
+            // Chiudi la connessione
+            clients[i]->is_active = 0;
+            closesocket(clients[i]->client_fd);
+            
+            printf("Client %s disconnesso per shutdown\n", clients[i]->name);
+        }
+        
         if (clients[i]) {
             game_leave(clients[i]);
+            // Non fare free qui - verrà fatto dal thread del client
             clients[i] = NULL;
         }
     }
     mutex_unlock(&lobby_mutex);
+    
+    // Aspetta un po' per permettere ai thread di terminare
+#ifdef _WIN32
+    Sleep(1000);
+#else
+    sleep(1);
+#endif
+    
     mutex_destroy(&lobby_mutex);
     
     printf("Lobby pulita\n");

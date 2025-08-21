@@ -315,7 +315,15 @@ void game_leave(Client *client) {
     
     if (opponent) {
         char msg[100];
-        snprintf(msg, sizeof(msg), "OPPONENT_LEFT:%s ha abbandonato", client->name);
+        
+        // Gestione speciale per disconnessione durante rematch
+        if (game->state == GAME_STATE_REMATCH_REQUESTED && game->rematch_requests > 0) {
+            snprintf(msg, sizeof(msg), "REMATCH_CANCELLED:%s si è disconnesso", client->name);
+            printf("Client %s si è disconnesso durante richiesta rematch, notificando avversario\n", client->name);
+        } else {
+            snprintf(msg, sizeof(msg), "OPPONENT_LEFT:%s ha abbandonato", client->name);
+        }
+        
         network_send_to_client(opponent, msg);
         opponent->game_id = -1;
     }

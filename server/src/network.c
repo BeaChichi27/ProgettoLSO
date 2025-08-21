@@ -381,7 +381,6 @@ int network_start_listening(ServerNetwork *server) {
 }
 
 void network_shutdown(ServerNetwork *server) {
-    printf("Iniziando spegnimento server...\n");
     server->is_running = 0;
 
     if (server->tcp_socket != INVALID_SOCKET_VALUE) {
@@ -531,7 +530,7 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     }
     
     buffer[bytes] = '\0';
-    printf("TCP <- %s: %s\n", client->name, buffer);
+    // Rimuoviamo la stampa duplicata - viene già stampata in network_handle_client_thread
     return bytes;
 }
 
