@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <signal.h>       // Per signal() e SIGINT
+#include <errno.h>        // Per errno e EINTR
 #include <sys/time.h>     // Per struct timeval
 #include <sys/types.h>    // Per fd_set e select
 
@@ -68,6 +69,7 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                 
                 // Aspetta la risposta del rematch con timeout
                 int rematch_handled = 0;
+                int rematch_requested_by_me = 1; // Flag per indicare che ho richiesto io il rematch
                 time_t start_time = time(NULL);
                 
                 while (!rematch_handled && difftime(time(NULL), start_time) < 30) {
@@ -87,6 +89,10 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                                     // Nota: player_symbol è passato per valore, non possiamo modificarlo
                                     // Questa modifica dovrebbe essere gestita dalla funzione chiamante
                                     printf("Nuovo simbolo da assegnare: %c\n", new_symbol);
+                                    printf("Premi INVIO per continuare...\n");
+                                    clear_stdin_buffer(); // Pulisce il buffer prima di aspettare
+                                    getchar(); // Aspetta che l'utente prema INVIO
+
                                 }
                             } else {
                                 // GAME_START arriva separatamente
@@ -110,38 +116,56 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                             game->winner = PLAYER_NONE;
                             game->is_draw = 0;
                             
-                             // Pulisce il buffer stdin per evitare input residui
+                            // Pulisce il buffer stdin per evitare input residui
                             clear_stdin_buffer();
 
                             // Mostra la board vuota per iniziare la nuova partita
                             printf("=== NUOVA PARTITA INIZIATA ===\n");
                             printf("\nPremere INVIO per proseguire...");
 
-                            char c= getc(stdin); // Aspetta che l'utente prema INVIO
-                            if(c=='\n'){
-                                ui_show_board(game->board);
+                            // Gestione sicura dell'input che può essere interrotto da SIGINT
+                            int input_received = 0;
+                            while (!input_received && keep_running) {
+                                char c = getchar();
+                                if (c == '\n' || c == EOF) {
+                                    input_received = 1;
+                                }
                             }
+                            
+                            // Se keep_running è diventato 0, il client sta uscendo
+                            if (!keep_running) {
+                                printf("Uscita durante rematch...\n");
+                                return 0; // Esce dal gioco
+                            }
+                            
+                            ui_show_board(game->board);
                             rematch_handled = 1;
                             return 1; // Continua il gioco - altra partita iniziata
                         } 
                         else if (strstr(message, "REMATCH_REQUEST:")) {
-                            printf("L'avversario ha richiesto un'altra partita.\n");
-                            printf("Accetti di giocare un'altra partita? (s/n): ");
-                            char response_to_request;
-                            scanf(" %c", &response_to_request);
-                            
-                            if (response_to_request == 's' || response_to_request == 'S') {
-                                network_request_rematch(conn);
-                                printf("Altra partita accettata! In attesa di iniziare...\n");
+                            if (!rematch_requested_by_me) {
+                                // Solo se NON ho richiesto io il rematch, mostro la domanda
+                                printf("L'avversario ha richiesto un'altra partita.\n");
+                                printf("Accetti di giocare un'altra partita? (s/n): ");
+                                char response_to_request;
+                                scanf(" %c", &response_to_request);
                                 
-                                // Pulisce il buffer stdin dopo l'input dell'utente
-                                clear_stdin_buffer();
-                                
-                                // Continua nel loop per ricevere REMATCH_ACCEPTED
+                                if (response_to_request == 's' || response_to_request == 'S') {
+                                    network_request_rematch(conn);
+                                    printf("Altra partita accettata! In attesa di iniziare...\n");
+                                    
+                                    // Pulisce il buffer stdin dopo l'input dell'utente
+                                    clear_stdin_buffer();
+                                    
+                                    // Continua nel loop per ricevere REMATCH_ACCEPTED
+                                } else {
+                                    printf("Altra partita rifiutata.\n");
+                                    rematch_handled = 1;
+                                    return 0; // Esce dal gioco - altra partita rifiutata
+                                }
                             } else {
-                                printf("Altra partita rifiutata.\n");
-                                rematch_handled = 1;
-                                return 0; // Esce dal gioco - altra partita rifiutata
+                                // Ignoro il messaggio se ho già richiesto io il rematch
+                                printf("In attesa che l'avversario risponda...\n");
                             }
                         }
                         else if (strstr(message, "REMATCH_SENT:")) {
@@ -202,6 +226,14 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
             // L'utente non vuole giocare un'altra partita - notifica il server
             printf("Rifiutando altra partita...\n");
             network_send(conn, "REMATCH_DECLINE", 0); // Invia il rifiuto al server
+            
+            // Aspetta conferma dal server che il rifiuto è stato registrato
+            char confirm_msg[MAX_MSG_SIZE];
+            int confirm_bytes = network_receive(conn, confirm_msg, sizeof(confirm_msg), 0);
+            if (confirm_bytes > 0) {
+                printf("Conferma server: %s\n", confirm_msg);
+            }
+            
             printf("Partita terminata. Tornando al menu principale...\n");
             return 0; // Esce dal gioco
         } else {
@@ -233,6 +265,12 @@ PlayerSymbol handle_create_game(NetworkConnection* conn) {
     int bytes;
     int game_started = 0;
     time_t start_time = time(NULL);
+
+    // Prima pulisci il buffer per rimuovere eventuali messaggi di partite precedenti
+    int flushed = network_flush_receive_buffer(conn);
+    if (flushed > 0) {
+        printf("[DEBUG] Buffer pulito: %d bytes di messaggi precedenti rimossi\n", flushed);
+    }
 
     if (!network_create_game(conn)) {
         ui_show_error(network_get_error());
@@ -321,11 +359,13 @@ retry_waiting:
         tv.tv_usec = 100000; // 100ms
         
         int select_result;
+        do {
 #ifdef _WIN32
-        select_result = select(0, &read_fds, NULL, NULL, &tv);
+            select_result = select(0, &read_fds, NULL, NULL, &tv);
 #else
-        select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
+            select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
 #endif
+        } while (select_result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
 
         if (select_result > 0 && FD_ISSET(conn->tcp_sock, &read_fds)) {
             bytes = network_receive(conn, message, sizeof(message), 0);
@@ -570,9 +610,38 @@ PlayerSymbol handle_join_game(NetworkConnection* conn) {
     // Loop per gestire tutte le possibili risposte
     time_t start_time = time(NULL);
     while (keep_running) {
-        // Timeout dopo 30 secondi
+        // Timeout ridotto a 30 secondi per evitare attese infinite
         if (difftime(time(NULL), start_time) > 30) {
-            ui_show_error("Timeout: impossibile unirsi alla partita");
+            ui_show_error("Timeout: il creatore non ha risposto entro 30 secondi");
+            return PLAYER_NONE;
+        }
+        
+        // Configura select con timeout per evitare blocchi infiniti
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(conn->tcp_sock, &read_fds);
+        
+        struct timeval tv;
+        tv.tv_sec = 2;  // Timeout di 2 secondi per ogni check
+        tv.tv_usec = 0;
+        
+        int select_result;
+        do {
+#ifdef _WIN32
+            select_result = select(0, &read_fds, NULL, NULL, &tv);
+#else
+            select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
+#endif
+        } while (select_result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        
+        if (select_result == 0) {
+            // Timeout - mostra messaggio di attesa e riprova
+            printf("Aspettando risposta del creatore...\n");
+            continue;
+        }
+        
+        if (select_result < 0) {
+            ui_show_error("Errore di connessione durante l'attesa");
             return PLAYER_NONE;
         }
         
@@ -804,11 +873,13 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                 tv.tv_usec = 0;
                 
                 int select_result;
+                do {
 #ifdef _WIN32
-                select_result = select(0, &read_fds, NULL, NULL, &tv);
+                    select_result = select(0, &read_fds, NULL, NULL, &tv);
 #else
-                select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
+                    select_result = select(conn->tcp_sock + 1, &read_fds, NULL, NULL, &tv);
 #endif
+                } while (select_result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
 
                 if (select_result > 0 && FD_ISSET(conn->tcp_sock, &read_fds)) {
                     char message[MAX_MSG_SIZE];
@@ -838,6 +909,19 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                             }
                             return; // Esce dalla funzione
                         }
+                    }
+                    else if (strstr(message, "ERROR:")) {
+                        printf("Errore dal server: %s\n", message);
+                        
+                        // Se l'errore riguarda il rematch, ignora e continua
+                        if (strstr(message, "rematch") || strstr(message, "REMATCH")) {
+                            printf("Errore rematch ignorato durante partita in corso\n");
+                            continue;
+                        }
+                        
+                        // Per altri errori, mostra e continua
+                        ui_show_error(message + 6); // Rimuove "ERROR:" dal messaggio
+                        continue;
                     }
                     else if (strstr(message, "OPPONENT_LEFT")) {
                         ui_show_message("L'avversario ha abbandonato la partita");
@@ -1091,6 +1175,12 @@ int main() {
     // network_start_keep_alive(&conn);
 
     while (keep_running) {
+        // Pulisci il buffer prima di ogni operazione del menu
+        int flushed = network_flush_receive_buffer(&conn);
+        if (flushed > 0) {
+            printf("[DEBUG] Buffer menu pulito: %d bytes rimossi\n", flushed);
+        }
+        
         int choice = ui_show_main_menu();
         
         switch (choice) {

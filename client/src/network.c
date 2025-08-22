@@ -408,8 +408,13 @@ int network_send_move(NetworkConnection *conn, int move) {
     char msg[16];
     snprintf(msg, sizeof(msg), "MOVE:%d", move);
 
-    if (sendto(conn->udp_sock, msg, strlen(msg), 0, 
-              (struct sockaddr *)&server_addr, sizeof(server_addr)) == SOCKET_ERROR_VALUE) {
+    ssize_t result;
+    do {
+        result = sendto(conn->udp_sock, msg, strlen(msg), 0, 
+                       (struct sockaddr *)&server_addr, sizeof(server_addr));
+    } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+    
+    if (result == SOCKET_ERROR_VALUE) {
         set_error("Invio mossa fallito");
         return 0;
     }
@@ -467,10 +472,18 @@ retry_receive:
     if (use_udp) {
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
-                      (struct sockaddr*)&from_addr, &from_len);
+        do {
+            bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
+                           (struct sockaddr*)&from_addr, &from_len);
+        } while (bytes == -1 && errno == EINTR);  // Riprova se interrotto da segnale
     } else {
-        bytes = recv(sock, buffer, buf_size - 1, 0);
+        do {
+            bytes = recv(sock, buffer, buf_size - 1, 0);
+            if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // Per socket non bloccanti, aspetta un po' prima di riprovare
+                usleep(10000); // 10ms
+            }
+        } while (bytes == -1 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK));
     }
     
     if (bytes > 0) {
@@ -518,6 +531,11 @@ retry_receive:
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;  // Timeout (non un errore)
         }
+        if (errno == EINTR) {
+            // Interrupted system call - non è un errore, riprova
+            printf("[DEBUG] System call interrotta da segnale, riprovo...\n");
+            goto retry_receive;
+        }
         char err_msg[256];
         snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %s", strerror(errno));
         set_error(err_msg);
@@ -541,8 +559,13 @@ int network_send(NetworkConnection *conn, const char *message, int use_udp) {
         server_addr.sin_port = htons(SERVER_PORT);
         inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
         
-        if (sendto(conn->udp_sock, message, strlen(message), 0,
-                  (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR_VALUE) {
+        ssize_t result;
+        do {
+            result = sendto(conn->udp_sock, message, strlen(message), 0,
+                           (struct sockaddr*)&server_addr, sizeof(server_addr));
+        } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        
+        if (result == SOCKET_ERROR_VALUE) {
             return 0;
         }
     } else if (conn->tcp_sock != INVALID_SOCKET_VALUE) {
@@ -550,7 +573,12 @@ int network_send(NetworkConnection *conn, const char *message, int use_udp) {
         char tcp_message[1024];
         snprintf(tcp_message, sizeof(tcp_message), "%s\n", message);
         
-        if (send(conn->tcp_sock, tcp_message, strlen(tcp_message), 0) == SOCKET_ERROR_VALUE) {
+        ssize_t result;
+        do {
+            result = send(conn->tcp_sock, tcp_message, strlen(tcp_message), 0);
+        } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        
+        if (result == SOCKET_ERROR_VALUE) {
             return 0;
         }
     } else {

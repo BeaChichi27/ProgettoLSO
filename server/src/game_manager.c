@@ -591,12 +591,18 @@ int game_request_rematch(Client *client) {
         game->winner = PLAYER_NONE;
         game->is_draw = 0;
         
+        // Alterna i ruoli nel rematch: chi era O diventa X e viceversa
+        Client* temp = game->player1;
+        game->player1 = game->player2;
+        game->player2 = temp;
+        
         network_send_to_client(game->player1, "REMATCH_ACCEPTED:Nuova partita iniziata!");
         network_send_to_client(game->player2, "REMATCH_ACCEPTED:Nuova partita iniziata!");
         network_send_to_client(game->player1, "GAME_START:X");
         network_send_to_client(game->player2, "GAME_START:O");
         
-        printf("Rematch accettato per partita %d\n", game->game_id);
+        printf("Rematch accettato per partita %d - Ruoli alternati: %s(X) vs %s(O)\n", 
+               game->game_id, game->player1->name, game->player2->name);
     } else {
         // Solo uno ha richiesto, notifica l'altro
         char msg[128];
