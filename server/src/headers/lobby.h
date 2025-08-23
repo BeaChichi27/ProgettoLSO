@@ -8,6 +8,7 @@
 
 int lobby_init();
 void lobby_cleanup();
+int lobby_is_full(); // Controlla se la lobby è piena
 
 Client* lobby_add_client(socket_t client_fd, const char *name);
 void lobby_remove_client(Client *client);
@@ -25,6 +26,7 @@ void lobby_handle_approve_join(Client *client, const char *message);
 void lobby_handle_list_games(Client *client);
 void lobby_handle_move(Client *client, const char *message);
 void lobby_handle_rematch(Client *client);
+void lobby_remove_client_reference(Client *client);
 
 // Cross-platform mutex access
 mutex_t* lobby_get_mutex();

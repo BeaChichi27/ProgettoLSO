@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define LOG_ERROR(msg) printf("ERROR: %s\n", msg)
 
@@ -534,30 +535,26 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     return bytes;
 }
 
-// Aggiungi questa funzione nel file network.c del server
-
 thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
     Client *client = (Client*)arg;
     char buffer[MAX_MSG_SIZE];
     int bytes;
+    int client_registered = 0;  // Flag per tracciare se il client è registrato
     
     printf("Thread client avviato per %s (FD: %d)\n", client->name, (int)client->client_fd);
     
-    // Aggiungi il client alla lobby
-    if (!lobby_add_client_reference(client)) {
-        printf("Errore aggiunta client %s alla lobby\n", client->name);
-        closesocket(client->client_fd);
-        free(client);
-#ifdef _WIN32
-        return 0;
-#else
-        return NULL;
-#endif
-    }
-    
-    printf("Client FD:%d aggiunto alla lobby nello slot\n", (int)client->client_fd);
+    // Timeout per la registrazione: il client deve registrarsi entro 30 secondi
+    time_t registration_start = time(NULL);
+    const int REGISTRATION_TIMEOUT = 30;
     
     while (client->is_active) {
+        // Controlla timeout di registrazione
+        if (!client_registered && difftime(time(NULL), registration_start) > REGISTRATION_TIMEOUT) {
+            printf("Timeout registrazione per client FD:%d\n", (int)client->client_fd);
+            network_send_to_client(client, "ERROR:Timeout registrazione");
+            break;
+        }
+        
         bytes = network_receive_from_client(client, buffer, sizeof(buffer));
         
         if (bytes <= 0) {
@@ -571,47 +568,82 @@ thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
         
         printf("TCP <- %s: %s\n", client->name, buffer);
         
-        // FIX PRINCIPALE: Gestisci i messaggi di registrazione qui
+        // Gestisci i messaggi di registrazione
         if (strncmp(buffer, "REGISTER:", 9) == 0) {
-            const char *name = buffer + 9;
-            
-            // Controlla se il nome è già in uso
-            if (lobby_find_client_by_name(name) && strcmp(client->name, name) != 0) {
-                network_send_to_client(client, "ERROR:Nome già in uso");
-                continue;
+            char name[MAX_NAME_LEN];
+            if (sscanf(buffer, "REGISTER:%49s", name) == 1) {
+                // Controlla se il nome è già in uso
+                if (lobby_find_client_by_name(name) && strcmp(client->name, name) != 0) {
+                    network_send_to_client(client, "ERROR:Nome già in uso");
+                    continue;
+                }
+                
+                // Se è lo stesso nome, conferma la registrazione
+                if (strcmp(client->name, name) == 0 && client_registered) {
+                    network_send_to_client(client, "OK:Già registrato");
+                    continue;
+                }
+                
+                // Aggiorna il nome del client
+                strncpy(client->name, name, sizeof(client->name) - 1);
+                client->name[sizeof(client->name) - 1] = '\0';
+                
+                // Aggiungi il client alla lobby solo dopo la registrazione successful
+                if (!client_registered) {
+                    if (lobby_add_client_reference(client)) {
+                        client_registered = 1;
+                        printf("Client FD:%d aggiunto alla lobby nello slot\n", (int)client->client_fd);
+                        network_send_to_client(client, "OK:Registrazione completata");
+                        printf("Client registrato con nome: %s\n", client->name);
+                    } else {
+                        network_send_to_client(client, "ERROR:Lobby piena");
+                        client->is_active = 0;
+                        break;
+                    }
+                } else {
+                    network_send_to_client(client, "OK:Registrazione completata");
+                    printf("Client aggiornato con nome: %s\n", client->name);
+                }
+            } else {
+                network_send_to_client(client, "ERROR:Nome non valido");
+                client->is_active = 0;
+                break;
             }
-            
-            // Se è lo stesso nome, conferma la registrazione
-            if (strcmp(client->name, name) == 0) {
-                network_send_to_client(client, "OK:Già registrato");
-                continue;
-            }
-            
-            // Aggiorna il nome del client
-            strncpy(client->name, name, MAX_NAME_LEN - 1);
-            client->name[MAX_NAME_LEN - 1] = '\0';
-            
-            network_send_to_client(client, "OK:Registrazione completata");
-            printf("Client registrato con nome: %s\n", name);
         }
         // Gestisci i ping/keep-alive
         else if (strcmp(buffer, "PING") == 0) {
             network_send_to_client(client, "PONG");
         }
-        // Delega altri messaggi alla lobby
-        else {
+        // Delega altri messaggi alla lobby se il client è registrato
+        else if (client_registered) {
             lobby_handle_client_message(client, buffer);
+        }
+        // Se il client non è ancora registrato e non è un comando REGISTER o PING
+        else {
+            network_send_to_client(client, "ERROR:Devi prima registrarti con REGISTER:nome");
         }
     }
     
     printf("Client %s sta uscendo dal thread\n", client->name);
     
-    // Pulizia
-    lobby_remove_client(client);
+    // Pulizia finale
+    if (client_registered) {
+        // Rimuovi dalla lobby
+        lobby_remove_client_reference(client);
+        
+        // Rimuovi da eventuali partite
+        if (client->game_id > 0) {
+            game_leave(client);
+        }
+    }
+    
+    // Chiudi socket e libera memoria
     closesocket(client->client_fd);
+    client->is_active = 0;
     free(client);
     
     printf("Thread client terminato\n");
+    
 #ifdef _WIN32
     return 0;
 #else

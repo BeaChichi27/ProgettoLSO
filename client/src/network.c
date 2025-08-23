@@ -349,28 +349,48 @@ int network_register_name(NetworkConnection *conn, const char *name) {
         return 0;
     }
 
+    // Aumenta il timeout per la risposta di registrazione
+    network_set_timeout(conn->tcp_sock, 10); // 10 secondi per registrazione
+
     char response[MAX_MSG_SIZE];
     int bytes = recv(conn->tcp_sock, response, sizeof(response) - 1, 0);
     if (bytes <= 0) {
-        set_error("Nessuna risposta dal server");
+        char err_msg[256];
+#ifdef _WIN32
+        int error = WSAGetLastError();
+        snprintf(err_msg, sizeof(err_msg), "Nessuna risposta dal server (errore: %d)", error);
+#else
+        snprintf(err_msg, sizeof(err_msg), "Nessuna risposta dal server (errno: %d - %s)", errno, strerror(errno));
+#endif
+        set_error(err_msg);
         return 0;
     }
     response[bytes] = '\0';
 
-    // Modifica qui: gestisci meglio la risposta
-    if (strstr(response, "OK") == NULL && strstr(response, "ERROR") != NULL) {
-        set_error(response); // Mostra l'errore del server
+    // Gestisci la risposta unificando entrambe le logiche
+    if (strstr(response, "OK:") != NULL || strstr(response, "OK") != NULL) {
+        // Successo - ripristina timeout normale dopo registrazione
+        if (network_set_timeout(conn->tcp_sock, 60) != 0) {
+            set_error("Impossibile impostare timeout connessione");
+            return 0;
+        }
+        
+        strncpy(conn->player_name, name, sizeof(conn->player_name) - 1);
+        conn->player_name[sizeof(conn->player_name) - 1] = '\0';
+        return 1;
+    } 
+    else if (strstr(response, "ERROR") != NULL) {
+        // Errore esplicito dal server
+        set_error(response);
         return 0;
     }
-
-    if (network_set_timeout(conn->tcp_sock, 60) != 0) {
-        set_error("Impossibile impostare timeout connessione");
+    else {
+        // Risposta non riconosciuta
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Risposta server non valida: %s", response);
+        set_error(err_msg);
         return 0;
     }
-    
-    strncpy(conn->player_name, name, sizeof(conn->player_name) - 1);
-    conn->player_name[sizeof(conn->player_name) - 1] = '\0';
-    return 1;
 }
 
 int network_create_game(NetworkConnection *conn) {

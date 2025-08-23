@@ -34,6 +34,8 @@ typedef struct {
     PlayerSymbol winner;
     int is_draw;
     int rematch_requests;    // Bit field: 1=player1 wants rematch, 2=player2 wants rematch
+    int rematch_declined;    // Bit field: 1=player1 declined, 2=player2 declined
+    Client* rematch_requester; // Chi ha richiesto per primo il rematch (avrà X)
     time_t creation_time;
     mutex_t mutex;
 } Game;

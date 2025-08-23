@@ -105,3 +105,28 @@ autom4te.cache/
 
 # Other
 nul
+
+# Docker specific
+.dockerignore
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Environment files
+.env.local
+.env.*.local
+
+# Project executables
+client
+server
+tris-client
+tris-server
+
+# Logs directory
+logs/
+
+# GDB history
+.gdb_history
+
+# Valgrind output
+vgcore.*
+*.memcheck

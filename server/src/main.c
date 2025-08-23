@@ -131,6 +131,14 @@ int main() {
                 break;
             }
             
+            // Aggiungi questo controllo
+            if (lobby_is_full()) {
+                printf("Lobby piena, rifiuto connessione\n");
+                closesocket(new_client->client_fd);
+                free(new_client);
+                continue;
+            }
+            
             // Creazione thread con gestione errori migliorata
 #ifdef _WIN32
             new_client->thread = CreateThread(NULL, 0, network_handle_client_thread, 

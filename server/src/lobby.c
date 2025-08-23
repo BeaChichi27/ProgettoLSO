@@ -57,6 +57,18 @@ void lobby_cleanup() {
     printf("Lobby pulita\n");
 }
 
+int lobby_is_full() {
+    mutex_lock(&lobby_mutex);
+    int count = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] != NULL) {
+            count++;
+        }
+    }
+    mutex_unlock(&lobby_mutex);
+    return count >= MAX_CLIENTS;
+}
+
 static int lobby_find_free_slot() {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i] == NULL) {
@@ -92,6 +104,25 @@ Client* lobby_add_client(socket_t client_fd, const char *name) {
     
     printf("Client %s aggiunto alla lobby\n", name);
     return client;
+}
+
+void lobby_remove_client_reference(Client *client) {
+    if (!client) return;
+    
+    mutex_lock(&lobby_mutex);
+    
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] == client) {
+            clients[i] = NULL;
+            printf("Client %s rimosso dalla lobby slot %d\n", client->name, i);
+            break;
+        }
+    }
+    
+    mutex_unlock(&lobby_mutex);
+    
+    // Aggiorna la lista giochi per tutti i client rimanenti
+    lobby_broadcast_game_list();
 }
 
 void lobby_remove_client(Client *client) {
@@ -233,15 +264,15 @@ void lobby_handle_client_message(Client *client, const char *message) {
         game_leave(client);
         network_send_to_client(client, "LEFT_GAME");
     } 
+    else if (strncmp(message, "REMATCH_DECLINE", 15) == 0) {
+        if (!game_decline_rematch(client)) {
+            printf("Nessun rematch per %s\n", client->name);
+        }
+    }
     else if (strncmp(message, "REMATCH", 7) == 0) {
         if (!game_request_rematch(client)) {
             // game_request_rematch già invia il messaggio di errore appropriato
             printf("Rematch fallito per %s\n", client->name);
-        }
-    }
-    else if (strncmp(message, "REMATCH_DECLINE", 15) == 0) {
-        if (!game_decline_rematch(client)) {
-            printf("Decline rematch fallito per %s\n", client->name);
         }
     }
     else if (strncmp(message, "APPROVE:", 8) == 0) {

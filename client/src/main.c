@@ -34,13 +34,13 @@ void clear_stdin_buffer() {
 }
 
 // Funzione per gestire la fine della partita e il rematch
-int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_symbol) {
+int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol *player_symbol) {
     // Mostra il risultato finale
     if (keep_running && game->state == GAME_STATE_OVER) {
         ui_show_board(game->board);
         
         if (game->winner != PLAYER_NONE) {
-            if (game->winner == player_symbol) {
+            if (game->winner == *player_symbol) {
                 ui_show_message("HAI VINTO!");
             } else {
                 ui_show_message("HAI PERSO!");
@@ -86,12 +86,12 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                                 printf("GAME_START trovato nel messaggio combinato: %s\n", message);
                                 char new_symbol;
                                 if (sscanf(game_start_pos, "GAME_START:%c", &new_symbol) == 1) {
-                                    // Nota: player_symbol è passato per valore, non possiamo modificarlo
-                                    // Questa modifica dovrebbe essere gestita dalla funzione chiamante
-                                    printf("Nuovo simbolo da assegnare: %c\n", new_symbol);
-                                    printf("Premi INVIO per continuare...\n");
-                                    clear_stdin_buffer(); // Pulisce il buffer prima di aspettare
-                                    getchar(); // Aspetta che l'utente prema INVIO
+                                    // Aggiorna il simbolo del giocatore per il rematch
+                                    *player_symbol = (PlayerSymbol)new_symbol;
+                                    printf("Nuovo simbolo assegnato: %c\n", *player_symbol);
+                                    printf("Premi INVIO 2 volte per continuare...\n");
+                                    // Usa getchar() semplice per aspettare INVIO
+                                    getchar();
 
                                 }
                             } else {
@@ -102,9 +102,9 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                                     printf("Nuovo GAME_START ricevuto: %s\n", start_msg);
                                     char new_symbol;
                                     if (sscanf(start_msg, "GAME_START:%c", &new_symbol) == 1) {
-                                        // Nota: player_symbol è passato per valore, non possiamo modificarlo
-                                        // Questa modifica dovrebbe essere gestita dalla funzione chiamante
-                                        printf("Nuovo simbolo da assegnare: %c\n", new_symbol);
+                                        // Aggiorna il simbolo del giocatore per il rematch
+                                        *player_symbol = (PlayerSymbol)new_symbol;
+                                        printf("Nuovo simbolo assegnato: %c\n", *player_symbol);
                                     }
                                 }
                             }
@@ -123,14 +123,8 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                             printf("=== NUOVA PARTITA INIZIATA ===\n");
                             printf("\nPremere INVIO per proseguire...");
 
-                            // Gestione sicura dell'input che può essere interrotto da SIGINT
-                            int input_received = 0;
-                            while (!input_received && keep_running) {
-                                char c = getchar();
-                                if (c == '\n' || c == EOF) {
-                                    input_received = 1;
-                                }
-                            }
+                            // Usa getchar() semplice per aspettare INVIO senza loop
+                            getchar();
                             
                             // Se keep_running è diventato 0, il client sta uscendo
                             if (!keep_running) {
@@ -186,9 +180,19 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
                         }
                         else if (strstr(message, "REMATCH_DECLINED:")) {
                             printf("L'avversario ha rifiutato l'altra partita.\n");
-                            printf("Tornando al menu principale...\n");
+                            printf("Premi INVIO per tornare al menu principale...\n");
+                            // Aspetta input INVIO
+                            getchar();
                             rematch_handled = 1;
                             return 0; // Esce dal gioco - rematch rifiutato dall'avversario
+                        }
+                        else if (strstr(message, "REMATCH_DECLINE_CONFIRMED:")) {
+                            printf("%s\n", message + 26); // Mostra il messaggio senza il prefisso
+                            printf("Premi INVIO per tornare al menu principale...\n");
+                            // Aspetta input INVIO
+                            getchar();
+                            rematch_handled = 1;
+                            return 0; // Esce dal gioco - ho rifiutato il rematch
                         }
                         else if (strstr(message, "OPPONENT_LEFT:")) {
                             printf("L'avversario ha abbandonato la partita: %s\n", message + 14);
@@ -231,10 +235,17 @@ int handle_game_end(NetworkConnection *conn, Game *game, PlayerSymbol player_sym
             char confirm_msg[MAX_MSG_SIZE];
             int confirm_bytes = network_receive(conn, confirm_msg, sizeof(confirm_msg), 0);
             if (confirm_bytes > 0) {
-                printf("Conferma server: %s\n", confirm_msg);
+                if (strstr(confirm_msg, "REMATCH_DECLINE_CONFIRMED:")) {
+                    printf("%s\n", confirm_msg + 26); // Mostra il messaggio senza il prefisso
+                } else {
+                    printf("Conferma server: %s\n", confirm_msg);
+                }
             }
             
-            printf("Partita terminata. Tornando al menu principale...\n");
+            printf("Premi INVIO per tornare al menu principale...\n");
+            // Non chiamare clear_stdin_buffer() qui perché potrebbe essere già pulito
+            // Aspetta input INVIO
+            getchar();
             return 0; // Esce dal gioco
         } else {
             // Risposta non valida
@@ -822,7 +833,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                         else if (strstr(extra_msg, "GAME_OVER:")) {
                             if (game_process_network_message(game, extra_msg)) {
                                 printf("Partita terminata!\n");
-                                if (!handle_game_end(conn, game, player_symbol)) {
+                                if (!handle_game_end(conn, game, &player_symbol)) {
                                     game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                                 }
                                 return;
@@ -835,7 +846,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
             else if (strstr(message, "GAME_OVER:")) {
                 if (game_process_network_message(game, message)) {
                     printf("Partita terminata!\n");
-                    if (!handle_game_end(conn, game, player_symbol)) {
+                    if (!handle_game_end(conn, game, &player_symbol)) {
                         game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                     }
                     return; // Esce dalla funzione dopo aver gestito il rematch
@@ -904,7 +915,7 @@ void game_loop(NetworkConnection* conn, Game* game, PlayerSymbol player_symbol) 
                     else if (strstr(message, "GAME_OVER:")) {
                         if (game_process_network_message(game, message)) {
                             printf("Partita terminata!\n");
-                            if (!handle_game_end(conn, game, player_symbol)) {
+                            if (!handle_game_end(conn, game, &player_symbol)) {
                                 game->state = GAME_STATE_OVER; // Segnala che il gioco è finito
                             }
                             return; // Esce dalla funzione

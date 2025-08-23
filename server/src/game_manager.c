@@ -133,6 +133,7 @@ int game_create_new(Client *creator) {
     game->winner = PLAYER_NONE;
     game->is_draw = 0;
     game->rematch_requests = 0;
+    game->rematch_declined = 0;
     game->creation_time = time(NULL);  // AGGIUNTO: era mancante
     game_init_board(game);
     
@@ -554,6 +555,14 @@ int game_request_rematch(Client *client) {
     
     mutex_lock(&game->mutex);
     
+    // Controlla se qualcuno ha già rifiutato il rematch
+    if (game->rematch_declined != 0) {
+        mutex_unlock(&game->mutex);
+        network_send_to_client(client, "ERROR:Il rematch è stato rifiutato, non è possibile richiederne un altro");
+        printf("Richiesta rematch rifiutata per partita %d - qualcuno ha già declinato\n", game->game_id);
+        return 0;
+    }
+    
     // Determina quale giocatore ha fatto la richiesta
     int player_bit = 0;
     Client *opponent = NULL;
@@ -581,28 +590,44 @@ int game_request_rematch(Client *client) {
     game->rematch_requests |= player_bit;
     game->state = GAME_STATE_REMATCH_REQUESTED;
     
+    // Traccia chi ha richiesto per primo il rematch (avrà sempre X)
+    if (game->rematch_requester == NULL) {
+        game->rematch_requester = client;
+        printf("Client %s è il primo a richiedere rematch (avrà X)\n", client->name);
+    }
+    
     // Controlla se entrambi hanno richiesto rematch
     if (game->rematch_requests == 3) { // 1 | 2 = 3
         // Entrambi vogliono giocare di nuovo
         game->rematch_requests = 0;
+        game->rematch_declined = 0;  // Resetta anche i decline per la nuova partita
         game_init_board(game);
         game->current_player = PLAYER_X;
         game->state = GAME_STATE_PLAYING;
         game->winner = PLAYER_NONE;
         game->is_draw = 0;
         
-        // Alterna i ruoli nel rematch: chi era O diventa X e viceversa
+        // NUOVA LOGICA: Alterna automaticamente i simboli
+        // Se player1 era X nella partita precedente, ora diventa O (e viceversa)
+        printf("[DEBUG REMATCH] Prima dell'alternanza - player1=%s, player2=%s\n", 
+               game->player1->name, game->player2->name);
+        
+        // Scambia sempre i ruoli per alternare
         Client* temp = game->player1;
-        game->player1 = game->player2;
-        game->player2 = temp;
+        game->player1 = game->player2;  // Ex player2 diventa player1 (X)
+        game->player2 = temp;           // Ex player1 diventa player2 (O)
         
-        network_send_to_client(game->player1, "REMATCH_ACCEPTED:Nuova partita iniziata!");
-        network_send_to_client(game->player2, "REMATCH_ACCEPTED:Nuova partita iniziata!");
-        network_send_to_client(game->player1, "GAME_START:X");
-        network_send_to_client(game->player2, "GAME_START:O");
+        printf("[DEBUG REMATCH] Dopo l'alternanza - player1=%s(X), player2=%s(O)\n", 
+               game->player1->name, game->player2->name);
         
-        printf("Rematch accettato per partita %d - Ruoli alternati: %s(X) vs %s(O)\n", 
+        network_send_to_client(game->player1, "REMATCH_ACCEPTED:Nuova partita iniziata!GAME_START:X");
+        network_send_to_client(game->player2, "REMATCH_ACCEPTED:Nuova partita iniziata!GAME_START:O");
+        
+        printf("Rematch accettato per partita %d - %s(X) vs %s(O)\n", 
                game->game_id, game->player1->name, game->player2->name);
+        
+        // Reset del richiedente per il prossimo possibile rematch
+        game->rematch_requester = NULL;
     } else {
         // Solo uno ha richiesto, notifica l'altro
         char msg[128];
@@ -677,10 +702,13 @@ int game_decline_rematch(Client *client) {
     
     // Ottiene l'avversario
     Client *opponent = NULL;
+    int player_bit = 0;
     if (game->player1 == client) {
         opponent = game->player2;
+        player_bit = 1;
     } else if (game->player2 == client) {
         opponent = game->player1;
+        player_bit = 2;
     } else {
         mutex_unlock(&game->mutex);
         network_send_to_client(client, "ERROR:Non fai parte di questa partita");
@@ -689,12 +717,20 @@ int game_decline_rematch(Client *client) {
     
     // Cancella TUTTE le richieste di rematch in corso
     game->rematch_requests = 0;
+    // Segna che questo giocatore ha rifiutato il rematch
+    game->rematch_declined |= player_bit;
     game->state = GAME_STATE_OVER;
+    
+    // Reset del richiedente dato che il rematch è stato rifiutato
+    game->rematch_requester = NULL;
     
     // Avvisa l'avversario che il rematch è stato rifiutato
     if (opponent) {
         network_send_to_client(opponent, "REMATCH_DECLINED:L'avversario ha rifiutato l'altra partita");
     }
+    
+    // Conferma al giocatore che ha rifiutato che la sua azione è stata registrata
+    network_send_to_client(client, "REMATCH_DECLINE_CONFIRMED:Hai rifiutato il rematch. La partita è terminata.");
     
     // Notifica che il rematch è stato rifiutato
     printf("Client %s ha rifiutato la rivincita per partita %d - cancellate tutte le richieste\n", client->name, game->game_id);
@@ -704,6 +740,5 @@ int game_decline_rematch(Client *client) {
 }
 
 void game_broadcast_to_all_clients(const char *message) {
-    // Questa funzione sarà implementata in lobby.c
     lobby_broadcast_message(message, NULL);
 }

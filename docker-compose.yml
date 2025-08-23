@@ -1,25 +1,105 @@
 version: '3.8'
 
 services:
-  server:
-    build: ./server
-    container_name: "${COMPOSE_PROJECT_NAME}-server-1"
+  # Server del Tris
+  tris-server:
+    build: 
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: tris-server
+    hostname: tris-server
     ports:
-      - "8080:8080"
-    networks:
-      - tris-net
-
-  client:
-    build: ./client
-    depends_on:
-      - server
+      - "${EXTERNAL_PORT:-8080}:${PORT:-8080}"
     environment:
-      - SERVER_HOST=server  # Usa il nome del servizio come hostname
+      - PORT=${PORT:-8080}
+      - MAX_CLIENTS=${MAX_CLIENTS:-100}
+      - DEBUG=${DEBUG:-1}
     networks:
-      - tris-net
-    stdin_open: true  # Necessario per l'input interattivo
-    tty: true         # Necessario per l'input interattivo
+      - tris-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ln | grep :8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Client del Tris (template per scaling)
+  tris-client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    depends_on:
+      tris-server:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=tris-server
+      - SERVER_PORT=${PORT:-8080}
+      - CLIENT_NAME=${CLIENT_NAME:-Player}
+    networks:
+      - tris-network
+    stdin_open: true    # Necessario per l'input interattivo
+    tty: true          # Necessario per l'output colorato
+    profiles: ["client"]  # Non avviato di default
+    
+  # Client predefiniti per demo
+  client-alice:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client-alice
+    depends_on:
+      tris-server:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=tris-server
+      - SERVER_PORT=${PORT:-8080}
+      - CLIENT_NAME=Alice
+    networks:
+      - tris-network
+    stdin_open: true
+    tty: true
+    profiles: ["demo"]
+
+  client-bob:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client-bob
+    depends_on:
+      tris-server:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=tris-server
+      - SERVER_PORT=${PORT:-8080}
+      - CLIENT_NAME=Bob
+    networks:
+      - tris-network
+    stdin_open: true
+    tty: true
+    profiles: ["demo"]
+
+  client-charlie:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client-charlie
+    depends_on:
+      tris-server:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=tris-server
+      - SERVER_PORT=${PORT:-8080}
+      - CLIENT_NAME=Charlie
+    networks:
+      - tris-network
+    stdin_open: true
+    tty: true
+    profiles: ["demo"]
 
 networks:
-  tris-net:
+  tris-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
