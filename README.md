@@ -43,7 +43,7 @@ ProgettoLSO/
 ├── run.sh                      # Universal Unix launcher script
 ├── runWin.ps1                  # Windows PowerShell script
 ├── Windows.bat                 # Windows batch launcher
-└── README.md                   # This documentation file
+└── tris-manager.sh             # Advanced management script
 ```
 
 ## Features
