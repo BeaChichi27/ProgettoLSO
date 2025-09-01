@@ -8,6 +8,12 @@
 static Client *clients[MAX_CLIENTS];
 static mutex_t lobby_mutex;
 
+/**
+ * Inizializza la lobby del server e le strutture dati necessarie.
+ * Prepara l'array dei client e inizializza il mutex per la sincronizzazione thread-safe.
+ * 
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int lobby_init() {
     if (mutex_init(&lobby_mutex) != 0) return 0;
     
@@ -21,6 +27,11 @@ int lobby_init() {
     return 1;
 }
 
+/**
+ * Pulisce e chiude tutte le risorse della lobby prima dello shutdown del server.
+ * Disconnette tutti i client attivi, invia notifiche di spegnimento e libera le risorse.
+ * Include una pausa per permettere ai thread di terminare correttamente.
+ */
 void lobby_cleanup() {
     mutex_lock(&lobby_mutex);
     printf("Disconnettendo tutti i client prima dello shutdown...\n");
@@ -57,6 +68,12 @@ void lobby_cleanup() {
     printf("Lobby pulita\n");
 }
 
+/**
+ * Controlla se la lobby ha raggiunto il numero massimo di client connessi.
+ * Operazione thread-safe che verifica la disponibilità di slot liberi.
+ * 
+ * @return 1 se la lobby è piena, 0 se ci sono ancora slot disponibili
+ */
 int lobby_is_full() {
     mutex_lock(&lobby_mutex);
     int count = 0;
@@ -69,6 +86,12 @@ int lobby_is_full() {
     return count >= MAX_CLIENTS;
 }
 
+/**
+ * Trova il primo slot libero nell'array dei client.
+ * NOTA: Questa funzione non è thread-safe, deve essere chiamata con il mutex acquisito.
+ * 
+ * @return Indice del primo slot libero, -1 se non ci sono slot disponibili
+ */
 static int lobby_find_free_slot() {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i] == NULL) {
@@ -78,6 +101,14 @@ static int lobby_find_free_slot() {
     return -1;
 }
 
+/**
+ * Aggiunge un nuovo client alla lobby con le informazioni fornite.
+ * Alloca memoria per il client, inizializza i suoi dati e lo inserisce nel primo slot libero.
+ * 
+ * @param client_fd Socket file descriptor del client
+ * @param name Nome del giocatore (massimo MAX_NAME_LEN-1 caratteri)
+ * @return Puntatore al client creato in caso di successo, NULL in caso di errore
+ */
 Client* lobby_add_client(socket_t client_fd, const char *name) {
     mutex_lock(&lobby_mutex);
     int slot = lobby_find_free_slot();
@@ -106,6 +137,12 @@ Client* lobby_add_client(socket_t client_fd, const char *name) {
     return client;
 }
 
+/**
+ * Rimuove il riferimento al client dall'array della lobby senza fare cleanup della memoria.
+ * Utilizzata quando il client viene gestito da un thread separato che si occuperà della deallocazione.
+ * 
+ * @param client Puntatore al client da rimuovere dalla lobby
+ */
 void lobby_remove_client_reference(Client *client) {
     if (!client) return;
     
@@ -125,6 +162,12 @@ void lobby_remove_client_reference(Client *client) {
     lobby_broadcast_game_list();
 }
 
+/**
+ * Rimuove completamente un client dalla lobby e dalle partite.
+ * Gestisce la disconnessione dalle partite in corso e rimuove il client dall'array.
+ * 
+ * @param client Puntatore al client da rimuovere
+ */
 void lobby_remove_client(Client *client) {
     if (!client) return;
     
@@ -142,6 +185,13 @@ void lobby_remove_client(Client *client) {
     printf("Client %s rimosso dalla lobby\n", client->name);
 }
 
+/**
+ * Cerca un client nella lobby utilizzando il file descriptor del socket.
+ * Operazione thread-safe per trovare un client tramite la sua connessione.
+ * 
+ * @param fd File descriptor del socket del client da cercare
+ * @return Puntatore al client se trovato, NULL altrimenti
+ */
 Client* lobby_find_client_by_fd(socket_t fd) {
     mutex_lock(&lobby_mutex);
     for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -155,6 +205,13 @@ Client* lobby_find_client_by_fd(socket_t fd) {
     return NULL;
 }
 
+/**
+ * Cerca un client nella lobby utilizzando il nome del giocatore.
+ * Operazione thread-safe per trovare un client tramite il suo nome utente.
+ * 
+ * @param name Nome del giocatore da cercare
+ * @return Puntatore al client se trovato, NULL altrimenti o se name è NULL
+ */
 Client* lobby_find_client_by_name(const char *name) {
     if (!name) return NULL;
     
@@ -170,6 +227,13 @@ Client* lobby_find_client_by_name(const char *name) {
     return NULL;
 }
 
+/**
+ * Invia un messaggio broadcast a tutti i client connessi alla lobby.
+ * Permette di escludere un client specifico dall'invio (utile per non inviare messaggi al mittente).
+ * 
+ * @param message Messaggio da inviare a tutti i client
+ * @param exclude Client da escludere dall'invio, NULL per inviare a tutti
+ */
 void lobby_broadcast_message(const char *message, Client *exclude) {
     if (!message) return;
     
@@ -182,6 +246,11 @@ void lobby_broadcast_message(const char *message, Client *exclude) {
     mutex_unlock(&lobby_mutex);
 }
 
+/**
+ * Invia la lista aggiornata delle partite disponibili a tutti i client liberi.
+ * Viene inviata solo ai client che non sono attualmente impegnati in una partita.
+ * Operazione ottimizzata per evitare spam ai giocatori in partita.
+ */
 void lobby_broadcast_game_list() {
     char game_list[MAX_MSG_SIZE];
     game_list_available(game_list, sizeof(game_list));
@@ -202,6 +271,17 @@ void lobby_broadcast_game_list() {
 
 // Fix per lobby_handle_client_message - Sostituire completamente
 
+/**
+ * Gestisce ed elabora tutti i messaggi ricevuti dai client.
+ * Router centrale per tutti i comandi del protocollo di comunicazione client-server.
+ * Analizza il messaggio e chiama la funzione appropriata per gestire ogni comando.
+ * 
+ * @param client Client che ha inviato il messaggio
+ * @param message Contenuto del messaggio ricevuto
+ * 
+ * @note Supporta i comandi: CREATE_GAME, LIST_GAMES, JOIN, MOVE, LEAVE, REMATCH, APPROVE, CANCEL, PING
+ * @note Include logging dettagliato per debugging e tracciamento delle operazioni
+ */
 void lobby_handle_client_message(Client *client, const char *message) {
     if (!client || !message) return;
     
@@ -299,15 +379,36 @@ void lobby_handle_client_message(Client *client, const char *message) {
     }
 }
 
+/**
+ * Restituisce un puntatore al mutex globale della lobby.
+ * Utilizzata da altre funzioni che necessitano di sincronizzazione con la lobby.
+ * 
+ * @return Puntatore al mutex della lobby
+ */
 mutex_t* lobby_get_mutex() {
     return &lobby_mutex;
 }
 
+/**
+ * Accede a un client nell'array tramite indice.
+ * Funzione di utilità per accesso diretto agli slot della lobby.
+ * 
+ * @param index Indice dello slot da verificare (0 a MAX_CLIENTS-1)
+ * @return Puntatore al client nello slot specificato, NULL se indice non valido o slot vuoto
+ */
 Client* lobby_get_client_by_index(int index) {
     if (index < 0 || index >= MAX_CLIENTS) return NULL;
     return clients[index]; 
 }
 
+/**
+ * Aggiunge un riferimento a un client esistente nell'array della lobby.
+ * Utilizzata quando il client è già stato allocato altrove e si vuole solo aggiungere
+ * il riferimento alla lobby senza duplicare la creazione.
+ * 
+ * @param client Puntatore al client da aggiungere alla lobby
+ * @return 1 in caso di successo, 0 se la lobby è piena o client è NULL
+ */
 int lobby_add_client_reference(Client *client) {
     if (!client) return 0;
     
@@ -328,6 +429,13 @@ int lobby_add_client_reference(Client *client) {
     return 0; 
 }
 
+/**
+ * Gestisce specificamente i messaggi di approvazione join.
+ * Wrapper per la funzione game_approve_join con gestione degli errori.
+ * 
+ * @param client Client creatore che deve approvare il join
+ * @param message Messaggio contenente la decisione (1 per approvare, 0 per rifiutare)
+ */
 void lobby_handle_approve_join(Client *client, const char *message) {
     if (!client || !message) return;
     

@@ -3,7 +3,6 @@
 #include "headers/ui.h"
 #include "headers/game_logic.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -24,6 +23,15 @@
 static char last_error[256] = {0};
 
 
+/**
+ * Imposta il messaggio di errore globale con informazioni di sistema specifiche per piattaforma.
+ * Utilizza WSAGetLastError() su Windows ed errno su sistemi Unix.
+ * 
+ * @param msg Messaggio di errore base da impostare
+ * 
+ * @note Il messaggio viene memorizzato nel buffer statico last_error
+ * @note Include automaticamente codici di errore di sistema quando disponibili
+ */
 static void set_error(const char *msg) {
 #ifdef _WIN32
     int error = WSAGetLastError();
@@ -41,6 +49,17 @@ static void set_error(const char *msg) {
     last_error[sizeof(last_error) - 1] = '\0';
 }
 
+/**
+ * Thread di keep-alive che invia periodicamente messaggi PING al server.
+ * Mantiene attiva la connessione e rileva disconnessioni automaticamente.
+ * 
+ * @param lpParam Puntatore alla struttura NetworkConnection
+ * @return 0 quando il thread termina
+ * 
+ * @note Cross-platform: utilizza thread Windows o pthread
+ * @note Invia PING ogni KEEP_ALIVE_INTERVAL secondi
+ * @note Si arresta quando keep_alive_active diventa false
+ */
 #ifdef _WIN32
 static DWORD WINAPI keep_alive_thread(LPVOID lpParam) {
 #else
@@ -54,7 +73,7 @@ static void* keep_alive_thread(void* lpParam) {
             break;
         }
         
-        // Attendi l'intervallo
+        
 #ifdef _WIN32
         Sleep(KEEP_ALIVE_INTERVAL * 1000);
 #else
@@ -65,10 +84,19 @@ static void* keep_alive_thread(void* lpParam) {
     return 0;
 }
 
+/**
+ * Avvia il thread di keep-alive per mantenere attiva la connessione al server.
+ * Crea un thread separato che invierà periodicamente messaggi PING.
+ * 
+ * @param conn Puntatore alla connessione di rete da mantenere attiva
+ * 
+ * @note Non fa nulla se conn è NULL o se il keep-alive è già attivo
+ * @note Il thread viene creato in modalità detached per cleanup automatico
+ */
 void network_start_keep_alive(NetworkConnection *conn) {
     if (!conn) return;
     
-    // DISABILITATO TEMPORANEAMENTE - causing interference
+    
     return;
     
     conn->keep_alive_active = 1;
@@ -85,6 +113,16 @@ void network_start_keep_alive(NetworkConnection *conn) {
 #endif
 }
 
+/**
+ * Arresta il thread di keep-alive e attende la sua terminazione.
+ * Imposta il flag di terminazione e attende che il thread si chiuda pulitamente.
+ * 
+ * @param conn Puntatore alla connessione di rete
+ * 
+ * @note Attende al massimo 1 secondo su Windows per la terminazione del thread
+ * @note Su sistemi Unix attende indefinitamente con pthread_join
+ * @note Gestisce automaticamente la pulizia delle risorse del thread
+ */
 void network_stop_keep_alive(NetworkConnection *conn) {
     if (!conn) return;
     
@@ -102,7 +140,15 @@ void network_stop_keep_alive(NetworkConnection *conn) {
 #endif
 }
 
-// Cross-platform network initialization
+/**
+ * Inizializza il sistema di rete globale per la piattaforma corrente.
+ * Su Windows inizializza Winsock, su Unix non fa operazioni specifiche.
+ * 
+ * @return 1 se l'inizializzazione è riuscita, 0 in caso di errore
+ * 
+ * @note Deve essere chiamata prima di qualsiasi operazione di rete
+ * @note Su Windows richiede la versione 2.2 di Winsock
+ */
 int network_global_init() {
 #ifdef _WIN32
     WSADATA wsaData;
@@ -117,12 +163,29 @@ int network_global_init() {
     return 1;
 }
 
+/**
+ * Pulisce le risorse di rete globali della piattaforma.
+ * Su Windows chiama WSACleanup, su Unix non fa operazioni specifiche.
+ * 
+ * @note Deve essere chiamata alla fine del programma per liberare le risorse
+ * @note Corrisponde a network_global_init() per la pulizia simmetrica
+ */
 void network_global_cleanup() {
 #ifdef _WIN32
     WSACleanup();
 #endif
 }
 
+/**
+ * Inizializza una struttura di connessione di rete.
+ * Imposta tutti i campi a valori di default e inizializza i socket.
+ * 
+ * @param conn Puntatore alla struttura NetworkConnection da inizializzare
+ * @return 1 se l'inizializzazione è riuscita, 0 in caso di errore
+ * 
+ * @note Crea socket TCP e UDP pronti per la connessione
+ * @note I socket vengono configurati con timeout appropriati
+ */
 int network_init(NetworkConnection *conn) {
     memset(conn, 0, sizeof(NetworkConnection));
     conn->tcp_sock = INVALID_SOCKET_VALUE;
@@ -130,7 +193,7 @@ int network_init(NetworkConnection *conn) {
     return 1;
 }
 
-// Global variables for threading and game state
+
 #ifndef _WIN32
     #include <pthread.h>
 #endif
@@ -140,7 +203,7 @@ int game_running = 1;
 int game_started = 0;
 char player_symbol = ' ';
 
-// Funzioni stub temporanee rimosse - la logica di gioco è nel main
+
 
 void network_cleanup(NetworkConnection *conn) {
     network_stop_keep_alive(conn);
@@ -158,37 +221,37 @@ void* message_receiver_thread(void* arg) {
         int bytes_received = network_receive(conn, buffer, sizeof(buffer), 0);
         
         if (bytes_received > 0) {
-            // Rimuovere newline se presente
+            
             buffer[strcspn(buffer, "\n")] = 0;
             
             printf("\n[DEBUG] Ricevuto: %s\n", buffer);
             handle_server_message(buffer);
         }
         else if (bytes_received == 0) {
-            // Timeout o nessun messaggio - continua
-            usleep(100000); // 100ms di pausa per evitare loop intensivo
+            
+            usleep(100000); 
             continue;
         }
         else {
-            // Gestione errori migliorata
+            
             const char* error = network_get_error();
             
-            // Se è EINTR (Interrupted system call), continua senza errore
+            
             if (strstr(error, "Interrupted system call") != NULL) {
                 printf("[DEBUG] Segnale ricevuto, continuo...\n");
                 continue;
             }
             
-            // Ignora timeout ed errori temporanei
+            
             if (strstr(error, "Timeout") != NULL || 
                 strstr(error, "EAGAIN") != NULL || 
                 strstr(error, "EWOULDBLOCK") != NULL || 
                 strstr(error, "WSAETIMEDOUT") != NULL) {
-                usleep(100000); // 100ms di pausa
+                usleep(100000); 
                 continue;
             }
             
-            // Solo errori reali causano l'uscita
+            
             printf("\n[ERRORE] Connessione persa: %s\n", error);
             game_running = 0;
             break;
@@ -200,8 +263,8 @@ void* message_receiver_thread(void* arg) {
 }
 
 void handle_server_message(const char* message) {
-    // Per ora gestiamo solo messaggi non critici nel thread receiver
-    // I messaggi di gioco vengono gestiti dal main thread
+    
+    
     
     if (strncmp(message, "GAMES:", 6) == 0) {
         printf("\n=== PARTITE DISPONIBILI ===\n");
@@ -215,7 +278,7 @@ void handle_server_message(const char* message) {
         printf("❌ Errore: %s\n", message + 6);
     }
     else if (strcmp(message, "PONG") != 0) {
-        // Non gestire messaggi di gioco qui - lascia che li gestisca il main
+        
         if (strncmp(message, "GAME_START:", 11) != 0 &&
             strncmp(message, "JOIN_ACCEPTED:", 14) != 0 &&
             strncmp(message, "MOVE:", 5) != 0 &&
@@ -250,7 +313,7 @@ int network_start_receiver_thread(NetworkConnection* conn) {
 
 void network_cleanup_connection(NetworkConnection* conn) {
     printf("[DEBUG] Inizio cleanup connessione\n");
-    game_running = 0;  // Ferma il thread receiver
+    game_running = 0;  
     
 #ifdef _WIN32
     if (conn->receiver_thread) {
@@ -267,11 +330,11 @@ void network_cleanup_connection(NetworkConnection* conn) {
     printf("[DEBUG] Cleanup connessione completato\n");
 }
 
-// Funzione per fermare rapidamente il receiver
+
 void network_stop_receiver() {
     game_running = 0;
 }
-// Cross-platform timeout setting
+
 int network_set_timeout(socket_t sock, int timeout_sec) {
 #ifdef _WIN32
     DWORD timeout = timeout_sec * 1000;
@@ -302,7 +365,7 @@ int network_connect_to_server(NetworkConnection *conn) {
         return 0;
     }
 
-    // Set timeout
+    
     network_set_timeout(conn->tcp_sock, TIMEOUT_SEC);
 
     struct sockaddr_in server_addr;
@@ -349,8 +412,8 @@ int network_register_name(NetworkConnection *conn, const char *name) {
         return 0;
     }
 
-    // Aumenta il timeout per la risposta di registrazione
-    network_set_timeout(conn->tcp_sock, 10); // 10 secondi per registrazione
+    
+    network_set_timeout(conn->tcp_sock, 10); 
 
     char response[MAX_MSG_SIZE];
     int bytes = recv(conn->tcp_sock, response, sizeof(response) - 1, 0);
@@ -367,9 +430,9 @@ int network_register_name(NetworkConnection *conn, const char *name) {
     }
     response[bytes] = '\0';
 
-    // Gestisci la risposta unificando entrambe le logiche
+    
     if (strstr(response, "OK:") != NULL || strstr(response, "OK") != NULL) {
-        // Successo - ripristina timeout normale dopo registrazione
+        
         if (network_set_timeout(conn->tcp_sock, 60) != 0) {
             set_error("Impossibile impostare timeout connessione");
             return 0;
@@ -380,12 +443,12 @@ int network_register_name(NetworkConnection *conn, const char *name) {
         return 1;
     } 
     else if (strstr(response, "ERROR") != NULL) {
-        // Errore esplicito dal server
+        
         set_error(response);
         return 0;
     }
     else {
-        // Risposta non riconosciuta
+        
         char err_msg[256];
         snprintf(err_msg, sizeof(err_msg), "Risposta server non valida: %s", response);
         set_error(err_msg);
@@ -432,7 +495,7 @@ int network_send_move(NetworkConnection *conn, int move) {
     do {
         result = sendto(conn->udp_sock, msg, strlen(msg), 0, 
                        (struct sockaddr *)&server_addr, sizeof(server_addr));
-    } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+    } while (result == -1 && errno == EINTR);  
     
     if (result == SOCKET_ERROR_VALUE) {
         set_error("Invio mossa fallito");
@@ -441,14 +504,14 @@ int network_send_move(NetworkConnection *conn, int move) {
     return 1;
 }
 
-// Svuota il buffer di ricezione
+
 int network_flush_receive_buffer(NetworkConnection *conn) {
     if (conn->tcp_sock == INVALID_SOCKET_VALUE) {
         set_error("Connessione non inizializzata");
         return -1;
     }
 
-    // Imposta socket non bloccante temporaneamente
+    
     int flags = fcntl(conn->tcp_sock, F_GETFL, 0);
     fcntl(conn->tcp_sock, F_SETFL, flags | O_NONBLOCK);
     
@@ -456,7 +519,7 @@ int network_flush_receive_buffer(NetworkConnection *conn) {
     int total_flushed = 0;
     int bytes_read;
     
-    // Leggi tutto ciò che è disponibile
+    
     do {
         bytes_read = recv(conn->tcp_sock, temp_buffer, sizeof(temp_buffer), 0);
         if (bytes_read > 0) {
@@ -466,7 +529,7 @@ int network_flush_receive_buffer(NetworkConnection *conn) {
         }
     } while (bytes_read > 0);
     
-    // Ripristina il socket bloccante
+    
     fcntl(conn->tcp_sock, F_SETFL, flags);
     
     return total_flushed;
@@ -488,49 +551,49 @@ retry_receive:
     socket_t sock = use_udp ? conn->udp_sock : conn->tcp_sock;
     int bytes;
     
-    // Versione semplificata: ricevi ogni messaggio direttamente
+    
     if (use_udp) {
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
         do {
             bytes = recvfrom(sock, buffer, buf_size - 1, 0, 
                            (struct sockaddr*)&from_addr, &from_len);
-        } while (bytes == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        } while (bytes == -1 && errno == EINTR);  
     } else {
         do {
             bytes = recv(sock, buffer, buf_size - 1, 0);
             if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                // Per socket non bloccanti, aspetta un po' prima di riprovare
-                usleep(10000); // 10ms
+                
+                usleep(10000); 
             }
         } while (bytes == -1 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK));
     }
     
     if (bytes > 0) {
-        buffer[bytes] = '\0';  // Termina la stringa
+        buffer[bytes] = '\0';  
         
-        // Rimuovi eventuali \n finali
+        
         char *newline = strchr(buffer, '\n');
         if (newline) *newline = '\0';
         
-        // DEBUG: Mostra tutti i messaggi ricevuti
+        
         printf("[DEBUG_RECV] Ricevuto: '%s'\n", buffer);
         
-        // Gestione automatica keep-alive per PING/PONG
+        
         if (strcmp(buffer, "PING") == 0) {
             printf("[DEBUG_RECV] Auto-risposta a PING\n");
             network_send(conn, "PONG", use_udp);
-            goto retry_receive; // Riprova a leggere
+            goto retry_receive; 
         }
         if (strcmp(buffer, "PONG") == 0) {
             printf("[DEBUG_RECV] Ignoro PONG\n");
-            goto retry_receive; // Riprova a leggere
+            goto retry_receive; 
         }
 
-        return strlen(buffer);  // Restituisce messaggi non-PING/PONG
+        return strlen(buffer);  
     } 
     else if (bytes == 0) {
-        // Connessione chiusa dal server (solo TCP)
+        
         if (!use_udp) {
             set_error("Connessione chiusa dal server");
             strcpy(buffer, "SERVER_DOWN");
@@ -538,21 +601,21 @@ retry_receive:
         return 0;
     } 
     else {
-        // Gestione errori
+        
 #ifdef _WIN32
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK || error == WSAETIMEDOUT) {
-            return 0;  // Timeout (non un errore)
+            return 0;  
         }
         char err_msg[256];
         snprintf(err_msg, sizeof(err_msg), "Errore ricezione: %d", error);
         set_error(err_msg);
 #else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0;  // Timeout (non un errore)
+            return 0;  
         }
         if (errno == EINTR) {
-            // Interrupted system call - non è un errore, riprova
+            
             printf("[DEBUG] System call interrotta da segnale, riprovo...\n");
             goto retry_receive;
         }
@@ -569,7 +632,7 @@ int network_send(NetworkConnection *conn, const char *message, int use_udp) {
         return 0;
     }
     
-    // DEBUG: Mostra tutti i messaggi inviati
+    
     printf("[DEBUG_SEND] Invio: '%s'\n", message);
     
     if (use_udp && conn->udp_sock != INVALID_SOCKET_VALUE) {
@@ -583,20 +646,20 @@ int network_send(NetworkConnection *conn, const char *message, int use_udp) {
         do {
             result = sendto(conn->udp_sock, message, strlen(message), 0,
                            (struct sockaddr*)&server_addr, sizeof(server_addr));
-        } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        } while (result == -1 && errno == EINTR);  
         
         if (result == SOCKET_ERROR_VALUE) {
             return 0;
         }
     } else if (conn->tcp_sock != INVALID_SOCKET_VALUE) {
-        // Per TCP, aggiungiamo \n come delimitatore
+        
         char tcp_message[1024];
         snprintf(tcp_message, sizeof(tcp_message), "%s\n", message);
         
         ssize_t result;
         do {
             result = send(conn->tcp_sock, tcp_message, strlen(tcp_message), 0);
-        } while (result == -1 && errno == EINTR);  // Riprova se interrotto da segnale
+        } while (result == -1 && errno == EINTR);  
         
         if (result == SOCKET_ERROR_VALUE) {
             return 0;

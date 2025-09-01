@@ -8,6 +8,15 @@
 
 #define LOG_ERROR(msg) printf("ERROR: %s\n", msg)
 
+/**
+ * Ottiene una descrizione dell'ultimo errore socket verificatosi.
+ * Fornisce messaggi di errore cross-platform per operazioni socket fallite.
+ * 
+ * @return Stringa descrittiva dell'errore socket più recente
+ * 
+ * @note Su Windows usa WSAGetLastError(), su Unix usa strerror(errno)
+ * @note La stringa restituita è valida fino alla prossima chiamata della funzione
+ */
 const char* get_socket_error() {
 #ifdef _WIN32
     static char buffer[256];
@@ -21,7 +30,14 @@ const char* get_socket_error() {
 
 static ServerNetwork *global_server = NULL;
 
-// Funzione per ottenere l'IP locale del server
+/**
+ * Stampa le informazioni di configurazione del server sulla console.
+ * Include porta di ascolto, hostname e indirizzi IP locali disponibili.
+ * Utile per debugging e verifica della configurazione di rete.
+ * 
+ * @note Su Windows enumera tutti gli IP tramite gethostbyname()
+ * @note Su Linux usa il comando hostname per ottenere gli IP
+ */
 void print_server_info() {
     printf("=== INFORMAZIONI SERVER ===\n");
     printf("Porta: %d\n", SERVER_PORT);
@@ -47,6 +63,14 @@ void print_server_info() {
     printf("===========================\n\n");
 }
 
+/**
+ * Registra un client per la comunicazione UDP salvando il suo indirizzo.
+ * Associa l'indirizzo UDP del client alla sua struttura dati per comunicazioni future.
+ * 
+ * @param client Puntatore al client da registrare per UDP
+ * @param udp_addr Indirizzo UDP del client da memorizzare
+ * @return 1 in caso di successo, 0 se i parametri sono invalidi
+ */
 static int network_register_udp_client(Client *client, struct sockaddr_in *udp_addr) {
     if (!client || !udp_addr) return 0;
     
@@ -59,6 +83,13 @@ static int network_register_udp_client(Client *client, struct sockaddr_in *udp_a
     return 1;
 }
 
+/**
+ * Cerca un client registrato tramite il suo indirizzo UDP.
+ * Operazione thread-safe che confronta indirizzi IP e porte UDP.
+ * 
+ * @param addr Indirizzo UDP da cercare tra i client registrati
+ * @return Puntatore al client corrispondente, NULL se non trovato o addr è NULL
+ */
 static Client* network_find_client_by_udp_addr(struct sockaddr_in *addr) {
     if (!addr) return NULL;
     
@@ -79,6 +110,15 @@ static Client* network_find_client_by_udp_addr(struct sockaddr_in *addr) {
     return NULL;
 }
 
+/**
+ * Invia un messaggio UDP a un indirizzo client specifico.
+ * Gestisce l'invio di risposte UDP con logging e gestione errori.
+ * 
+ * @param server Struttura server contenente il socket UDP
+ * @param client_addr Indirizzo di destinazione del messaggio
+ * @param message Messaggio da inviare
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 static int network_send_udp_response(ServerNetwork *server, struct sockaddr_in *client_addr, const char *message) {
     if (!server || !client_addr || !message) return 0;
     
@@ -101,6 +141,14 @@ static int network_send_udp_response(ServerNetwork *server, struct sockaddr_in *
     return 1;
 }
 
+/**
+ * Gestisce la registrazione UDP di un client tramite nome.
+ * Trova il client per nome e lo registra per la comunicazione UDP.
+ * 
+ * @param server Struttura server per l'invio della risposta
+ * @param client_addr Indirizzo UDP del client da registrare
+ * @param name Nome del client da cercare e registrare
+ */
 static void handle_udp_register(ServerNetwork *server, struct sockaddr_in *client_addr, const char *name) {
     Client *client = lobby_find_client_by_name(name);
     if (!client) {
@@ -115,6 +163,14 @@ static void handle_udp_register(ServerNetwork *server, struct sockaddr_in *clien
     }
 }
 
+/**
+ * Gestisce una mossa di gioco ricevuta tramite UDP.
+ * Valida il formato della mossa, trova il client e esegue la mossa nella partita.
+ * 
+ * @param server Struttura server per l'invio della risposta
+ * @param client_addr Indirizzo del client che ha inviato la mossa
+ * @param move_data Dati della mossa nel formato "riga,colonna"
+ */
 static void handle_udp_move(ServerNetwork *server, struct sockaddr_in *client_addr, const char *move_data) {
     int row, col;
     if (sscanf(move_data, "%d,%d", &row, &col) != 2) {
@@ -140,10 +196,24 @@ static void handle_udp_move(ServerNetwork *server, struct sockaddr_in *client_ad
     }
 }
 
+/**
+ * Gestisce una richiesta di ping UDP inviando una risposta PONG.
+ * Utilizzata per verificare la connettività UDP e mantenere la connessione attiva.
+ * 
+ * @param server Struttura server per l'invio della risposta
+ * @param client_addr Indirizzo del client che ha inviato il ping
+ */
 static void handle_udp_ping(ServerNetwork *server, struct sockaddr_in *client_addr) {
     network_send_udp_response(server, client_addr, "PONG");
 }
 
+/**
+ * Gestisce una richiesta di stato di gioco tramite UDP.
+ * Invia le informazioni correnti della partita del client richiedente.
+ * 
+ * @param server Struttura server per l'invio della risposta
+ * @param client_addr Indirizzo del client che richiede lo stato
+ */
 static void handle_udp_game_state(ServerNetwork *server, struct sockaddr_in *client_addr) {
     Client *client = network_find_client_by_udp_addr(client_addr);
     if (!client) {
@@ -171,6 +241,17 @@ static void handle_udp_game_state(ServerNetwork *server, struct sockaddr_in *cli
     network_send_udp_response(server, client_addr, state_msg);
 }
 
+/**
+ * Thread dedicato alla gestione delle comunicazioni UDP.
+ * Riceve e processa tutti i messaggi UDP in un loop separato dal TCP.
+ * Supporta comandi: UDP_REGISTER, MOVE, PING, GET_GAME_STATE, UDP_DISCONNECT.
+ * 
+ * @param arg Puntatore alla struttura ServerNetwork
+ * @return Valore di ritorno del thread (0 su Windows, NULL su Unix)
+ * 
+ * @note Funziona finché server->is_running è true
+ * @note Include timeout per evitare blocchi indefiniti
+ */
 #ifdef _WIN32
 thread_return_t THREAD_CALL network_handle_udp_thread(thread_param_t arg) {
 #else
@@ -246,6 +327,16 @@ thread_return_t network_handle_udp_thread(thread_param_t arg) {
 #endif
 }
 
+/**
+ * Inizializza la struttura di rete del server e configura i socket TCP e UDP.
+ * Crea e configura entrambi i socket, imposta le opzioni per prestazioni ottimali.
+ * 
+ * @param server Puntatore alla struttura ServerNetwork da inizializzare
+ * @return 1 in caso di successo, 0 in caso di errore
+ * 
+ * @note Su Windows inizializza WSA, su Unix configura direttamente i socket
+ * @note Imposta SO_REUSEADDR, timeout UDP e disabilita l'algoritmo di Nagle per TCP
+ */
 int network_init(ServerNetwork *server) {
 #ifdef _WIN32
     WSADATA wsaData;
@@ -327,6 +418,16 @@ int network_init(ServerNetwork *server) {
     return 1;
 }
 
+/**
+ * Avvia l'ascolto su entrambi i socket TCP e UDP.
+ * Esegue il bind sui socket, avvia il listening TCP e crea il thread UDP.
+ * 
+ * @param server Struttura server inizializzata
+ * @return 1 in caso di successo, 0 in caso di errore
+ * 
+ * @note Stampa informazioni dettagliate del server all'avvio
+ * @note Crea automaticamente il thread UDP per gestire connessioni asincrone
+ */
 int network_start_listening(ServerNetwork *server) {
     // Bind TCP
     if (bind(server->tcp_socket, (struct sockaddr*)&server->server_addr, 
@@ -381,6 +482,16 @@ int network_start_listening(ServerNetwork *server) {
     return 1;
 }
 
+/**
+ * Spegne completamente il server e chiude tutte le risorse di rete.
+ * Termina i thread, chiude i socket e pulisce le risorse di sistema.
+ * 
+ * @param server Struttura server da spegnere
+ * 
+ * @note Imposta is_running=0 per terminare tutti i thread
+ * @note Esegue shutdown() sui socket prima di chiuderli
+ * @note Su Windows chiama WSACleanup() per pulire le risorse WSA
+ */
 void network_shutdown(ServerNetwork *server) {
     server->is_running = 0;
 
@@ -413,6 +524,17 @@ void network_shutdown(ServerNetwork *server) {
     printf("Server spento completamente\n");
 }
 
+/**
+ * Accetta una nuova connessione TCP e crea la struttura Client corrispondente.
+ * Configura il socket client per prestazioni ottimali e logga le informazioni di connessione.
+ * 
+ * @param server Struttura server con il socket TCP in ascolto
+ * @return Puntatore al nuovo Client creato, NULL in caso di errore
+ * 
+ * @note Alloca memoria per il Client che dovrà essere liberata dal chiamante
+ * @note Configura TCP_NODELAY per ridurre la latenza
+ * @note Include logging dettagliato delle informazioni di connessione
+ */
 Client* network_accept_client(ServerNetwork *server) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -465,6 +587,18 @@ Client* network_accept_client(ServerNetwork *server) {
     return client;
 }
 
+/**
+ * Invia un messaggio TCP a un client specifico.
+ * Valida i parametri, controlla lo stato del client e gestisce gli errori di invio.
+ * 
+ * @param client Client di destinazione del messaggio
+ * @param message Messaggio da inviare (deve essere < MAX_MSG_SIZE)
+ * @return 1 in caso di successo, 0 in caso di errore
+ * 
+ * @note Marca il client come inattivo se l'invio fallisce
+ * @note Include logging di tutti i messaggi inviati
+ * @note Valida la lunghezza del messaggio per evitare overflow
+ */
 int network_send_to_client(Client *client, const char *message) {
     if (!client || !message || strlen(message) == 0 || strlen(message) >= MAX_MSG_SIZE) {
         LOG_ERROR("network_send_to_client: Parametri invalidi");
@@ -492,6 +626,19 @@ int network_send_to_client(Client *client, const char *message) {
     return 1;
 }
 
+/**
+ * Riceve un messaggio TCP da un client con timeout configurabile.
+ * Gestisce timeout lunghi per evitare disconnessioni premature e logga gli errori.
+ * 
+ * @param client Client da cui ricevere il messaggio
+ * @param buffer Buffer dove scrivere il messaggio ricevuto
+ * @param buf_size Dimensione del buffer di ricezione
+ * @return Numero di byte ricevuti, -1 in caso di errore o disconnessione
+ * 
+ * @note Imposta timeout di 10 minuti per evitare disconnessioni durante inattività
+ * @note Null-termina automaticamente il buffer ricevuto
+ * @note Marca il client come inattivo se la ricezione fallisce
+ */
 int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     if (!client || !client->is_active || !buffer) {
         return -1;
@@ -535,6 +682,19 @@ int network_receive_from_client(Client *client, char *buffer, size_t buf_size) {
     return bytes;
 }
 
+/**
+ * Thread principale per la gestione di un singolo client.
+ * Gestisce registrazione, autenticazione e tutti i messaggi del client.
+ * Include timeout di registrazione e pulizia automatica delle risorse.
+ * 
+ * @param arg Puntatore al Client da gestire
+ * @return Valore di ritorno del thread (0 su Windows, NULL su Unix)
+ * 
+ * @note Richiede registrazione entro 30 secondi dalla connessione
+ * @note Gestisce automaticamente l'aggiunta/rimozione dalla lobby
+ * @note Libera la memoria del client al termine
+ * @note Delega i messaggi di gioco alla lobby dopo la registrazione
+ */
 thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
     Client *client = (Client*)arg;
     char buffer[MAX_MSG_SIZE];
@@ -651,6 +811,19 @@ thread_return_t THREAD_CALL network_handle_client_thread(thread_param_t arg) {
 #endif
 }
 
+/**
+ * Funzione di utilità per creare thread cross-platform.
+ * Astrae le differenze tra CreateThread (Windows) e pthread_create (Unix).
+ * 
+ * @param thread Puntatore dove memorizzare l'handle del thread creato
+ * @param start_routine Funzione da eseguire nel nuovo thread
+ * @param arg Argomento da passare alla funzione del thread
+ * @param thread_name Nome descrittivo del thread per logging
+ * @return 0 in caso di successo, -1 in caso di errore
+ * 
+ * @note Su Unix imposta il thread come detached e cancellabile
+ * @note Include logging della creazione del thread
+ */
 int create_thread(thread_t *thread, thread_return_t (THREAD_CALL *start_routine)(thread_param_t), void *arg, const char *thread_name) {
 #ifdef _WIN32
     *thread = CreateThread(NULL, 0, start_routine, arg, 0, NULL);

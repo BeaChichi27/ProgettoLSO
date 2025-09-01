@@ -11,6 +11,12 @@ static Game games[MAX_GAMES];
 static mutex_t games_mutex;  // CAMBIATO: era CRITICAL_SECTION
 static int next_game_id = 1;
 
+/**
+ * Inizializza un mutex per la sincronizzazione cross-platform.
+ * 
+ * @param mutex Puntatore al mutex da inizializzare
+ * @return 0 in caso di successo, valore diverso in caso di errore
+ */
 int mutex_init(mutex_t *mutex) {
     #ifdef _WIN32
         return InitializeCriticalSection(mutex); // Corretto: Inizializza l'intera struttura
@@ -19,6 +25,12 @@ int mutex_init(mutex_t *mutex) {
     #endif
 }
 
+/**
+ * Acquisisce il lock di un mutex per l'accesso esclusivo a una risorsa condivisa.
+ * 
+ * @param mutex Puntatore al mutex da bloccare
+ * @return 0 in caso di successo, valore diverso in caso di errore
+ */
 int mutex_lock(mutex_t *mutex) {
     #ifdef _WIN32
         EnterCriticalSection(mutex); // Corretto: Blocca l'intera struttura
@@ -28,6 +40,12 @@ int mutex_lock(mutex_t *mutex) {
     #endif
 }
 
+/**
+ * Rilascia il lock di un mutex per consentire l'accesso ad altri thread.
+ * 
+ * @param mutex Puntatore al mutex da sbloccare
+ * @return 0 in caso di successo, valore diverso in caso di errore
+ */
 int mutex_unlock(mutex_t *mutex) {
     #ifdef _WIN32
         LeaveCriticalSection(mutex); // Corretto: Sblocca l'intera struttura
@@ -37,6 +55,12 @@ int mutex_unlock(mutex_t *mutex) {
     #endif
 }
 
+/**
+ * Distrugge un mutex e libera le risorse associate.
+ * 
+ * @param mutex Puntatore al mutex da distruggere
+ * @return 0 in caso di successo, valore diverso in caso di errore
+ */
 int mutex_destroy(mutex_t *mutex) {
     #ifdef _WIN32
         DeleteCriticalSection(mutex); // Corretto: Distrugge l'intera struttura
@@ -46,6 +70,12 @@ int mutex_destroy(mutex_t *mutex) {
     #endif
 }
 
+/**
+ * Inizializza il gestore delle partite, preparando tutte le strutture dati necessarie.
+ * Inizializza l'array di partite, i mutex associati e imposta i valori di default.
+ * 
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_manager_init() {
     if (mutex_init(&games_mutex) != 0) return 0;
     
@@ -72,6 +102,10 @@ int game_manager_init() {
     return 1;
 }
 
+/**
+ * Pulisce tutte le risorse del game manager e distrugge i mutex.
+ * Deve essere chiamata prima della terminazione del server per evitare memory leak.
+ */
 void game_manager_cleanup() {
     if (mutex_lock(&games_mutex) != 0) return;
     
@@ -85,6 +119,13 @@ void game_manager_cleanup() {
     printf("Game Manager pulito\n");
 }
 
+/**
+ * Cerca una partita nell'array delle partite utilizzando l'ID.
+ * La ricerca è thread-safe grazie al mutex globale.
+ * 
+ * @param game_id ID della partita da cercare
+ * @return Puntatore alla partita se trovata, NULL altrimenti
+ */
 Game* game_find_by_id(int game_id) {
     mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     for (int i = 0; i < MAX_GAMES; i++) {
@@ -97,6 +138,12 @@ Game* game_find_by_id(int game_id) {
     return NULL;
 }
 
+/**
+ * Trova il primo slot libero nell'array delle partite.
+ * NOTA: Questa funzione non è thread-safe, deve essere chiamata con il mutex acquisito.
+ * 
+ * @return Puntatore al primo slot libero, NULL se non ci sono slot disponibili
+ */
 static Game* game_find_free_slot() {
     for (int i = 0; i < MAX_GAMES; i++) {
         if (games[i].game_id == -1) {
@@ -106,6 +153,11 @@ static Game* game_find_free_slot() {
     return NULL;
 }
 
+/**
+ * Inizializza la griglia di gioco di una partita, impostando tutte le celle a PLAYER_NONE.
+ * 
+ * @param game Puntatore alla partita di cui inizializzare la griglia
+ */
 void game_init_board(Game *game) {
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
@@ -114,6 +166,13 @@ void game_init_board(Game *game) {
     }
 }
 
+/**
+ * Crea una nuova partita con il client specificato come creatore.
+ * Il creatore diventa automaticamente il giocatore X e la partita entra in stato di attesa.
+ * 
+ * @param creator Client che crea la partita
+ * @return ID della partita creata, -1 in caso di errore
+ */
 int game_create_new(Client *creator) {
     if (!creator) return -1;
     
@@ -146,6 +205,14 @@ int game_create_new(Client *creator) {
     return game->game_id;
 }
 
+/**
+ * Gestisce la richiesta di un client di unirsi a una partita esistente.
+ * Implementa un sistema di approvazione dove il creatore deve accettare il join.
+ * 
+ * @param client Client che vuole unirsi alla partita
+ * @param game_id ID della partita a cui unirsi
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_join(Client *client, int game_id) {
     if (!client) return 0;
 
@@ -211,6 +278,14 @@ int game_join(Client *client, int game_id) {
     return 1;
 }
 
+/**
+ * Gestisce l'approvazione o il rifiuto di una richiesta di join da parte del creatore.
+ * Se approvata, il giocatore diventa player2 e la partita inizia.
+ * 
+ * @param creator Client creatore della partita che deve approvare
+ * @param approve 1 per approvare, 0 per rifiutare
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_approve_join(Client *creator, int approve) {
     if (!creator || creator->game_id <= 0) return 0;
     
@@ -280,6 +355,12 @@ int game_approve_join(Client *creator, int approve) {
 }
 
 
+/**
+ * Gestisce l'uscita di un client da una partita.
+ * Notifica l'avversario, pulisce la partita e aggiorna la lista giochi.
+ * 
+ * @param client Client che vuole lasciare la partita
+ */
 void game_leave(Client *client) {
     if (!client || client->game_id <= 0) return;
     Game *game = game_find_by_id(client->game_id);
@@ -348,6 +429,13 @@ void game_leave(Client *client) {
     lobby_broadcast_game_list();
 }
 
+/**
+ * Controlla se c'è un vincitore nella partita.
+ * Verifica righe, colonne e diagonali per determinare se qualcuno ha vinto.
+ * 
+ * @param game Partita da controllare
+ * @return Simbolo del vincitore (PLAYER_X o PLAYER_O), PLAYER_NONE se nessun vincitore
+ */
 int game_check_winner(Game *game) {
     // Controllo righe
     for (int i = 0; i < 3; i++) {
@@ -384,6 +472,12 @@ int game_check_winner(Game *game) {
     return PLAYER_NONE;
 }
 
+/**
+ * Controlla se la griglia di gioco è completamente piena.
+ * 
+ * @param game Partita da controllare
+ * @return 1 se la griglia è piena, 0 altrimenti
+ */
 int game_is_board_full(Game *game) {
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
@@ -395,6 +489,15 @@ int game_is_board_full(Game *game) {
     return 1;
 }
 
+/**
+ * Verifica se una mossa è valida per la posizione specificata.
+ * Controlla che le coordinate siano dentro i limiti e che la cella sia libera.
+ * 
+ * @param game Partita di riferimento
+ * @param row Riga della mossa (0-2)
+ * @param col Colonna della mossa (0-2)
+ * @return 1 se la mossa è valida, 0 altrimenti
+ */
 int game_is_valid_move(Game *game, int row, int col) {
     if (row < 0 || row > 2 || col < 0 || col > 2) {
         return 0;
@@ -402,6 +505,16 @@ int game_is_valid_move(Game *game, int row, int col) {
     return game->board[row][col] == PLAYER_NONE;
 }
 
+/**
+ * Esegue una mossa in una partita se valida.
+ * Controlla il turno, la validità della mossa, aggiorna la griglia e verifica vittoria/pareggio.
+ * 
+ * @param game_id ID della partita
+ * @param client Client che effettua la mossa
+ * @param row Riga della mossa (0-2)
+ * @param col Colonna della mossa (0-2)
+ * @return 1 se la mossa è stata eseguita con successo, 0 altrimenti
+ */
 int game_make_move(int game_id, Client *client, int row, int col) {
     Game *game = game_find_by_id(game_id);
     if (!game || !client) return 0;
@@ -456,6 +569,12 @@ int game_make_move(int game_id, Client *client, int row, int col) {
     return 1;
 }
 
+/**
+ * Resetta una partita al suo stato iniziale per un nuovo round.
+ * Pulisce la griglia, resetta il turno e notifica i giocatori.
+ * 
+ * @param game_id ID della partita da resettare
+ */
 void game_reset(int game_id) {
     Game *game = game_find_by_id(game_id);
     if (!game) return;
@@ -474,6 +593,13 @@ void game_reset(int game_id) {
     printf("Partita %d resettata\n", game_id);
 }
 
+/**
+ * Genera una lista delle partite disponibili formattata per l'invio ai client.
+ * Include partite in attesa, in corso e con richieste pendenti.
+ * 
+ * @param response Buffer dove scrivere la lista formattata
+ * @param max_len Dimensione massima del buffer
+ */
 void game_list_available(char *response, size_t max_len) {
     strcpy(response, "GAMES:");
     
@@ -521,6 +647,10 @@ void game_list_available(char *response, size_t max_len) {
     }
 }
 
+/**
+ * Controlla e rimuove le partite che sono in attesa da troppo tempo.
+ * Cancella automaticamente le partite in stato WAITING dopo 5 minuti di inattività.
+ */
 void game_check_timeouts() {
     mutex_lock(&games_mutex);  // CAMBIATO: era EnterCriticalSection
     time_t now = time(NULL);
@@ -541,6 +671,14 @@ void game_check_timeouts() {
     mutex_unlock(&games_mutex);  // CAMBIATO: era LeaveCriticalSection
 }
 
+/**
+ * Gestisce una richiesta di rematch da parte di un giocatore.
+ * Se entrambi i giocatori richiedono il rematch, avvia automaticamente una nuova partita
+ * alternando i simboli dei giocatori.
+ * 
+ * @param client Client che richiede il rematch
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_request_rematch(Client *client) {
     if (!client || client->game_id <= 0) {
         network_send_to_client(client, "ERROR:Non sei in una partita");
@@ -642,6 +780,13 @@ int game_request_rematch(Client *client) {
     return 1;
 }
 
+/**
+ * Annulla una richiesta di rematch in corso.
+ * Resetta lo stato della partita e notifica l'avversario della cancellazione.
+ * 
+ * @param client Client che vuole annullare il rematch
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_cancel_rematch(Client *client) {
     if (!client || client->game_id <= 0) {
         network_send_to_client(client, "ERROR:Non sei in una partita");
@@ -686,6 +831,13 @@ int game_cancel_rematch(Client *client) {
     return 1;
 }
 
+/**
+ * Rifiuta esplicitamente una richiesta di rematch.
+ * Cancella tutte le richieste di rematch pendenti e impedisce future richieste.
+ * 
+ * @param client Client che rifiuta il rematch
+ * @return 1 in caso di successo, 0 in caso di errore
+ */
 int game_decline_rematch(Client *client) {
     if (!client || client->game_id <= 0) {
         network_send_to_client(client, "ERROR:Non sei in una partita");
@@ -739,6 +891,12 @@ int game_decline_rematch(Client *client) {
     return 1;
 }
 
+/**
+ * Invia un messaggio broadcast a tutti i client connessi tramite il sistema lobby.
+ * Funzione di utilità per comunicazioni globali.
+ * 
+ * @param message Messaggio da inviare a tutti i client
+ */
 void game_broadcast_to_all_clients(const char *message) {
     lobby_broadcast_message(message, NULL);
 }

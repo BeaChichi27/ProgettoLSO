@@ -26,6 +26,17 @@ static int server_running = 1;
 
 // CAMBIATO: Gestione segnali cross-platform
 #ifdef _WIN32
+/**
+ * Gestore dei segnali di console per Windows.
+ * Gestisce eventi di chiusura console (Ctrl+C, chiusura finestra) per permettere
+ * shutdown controllato del server.
+ * 
+ * @param signal Tipo di segnale ricevuto (CTRL_C_EVENT, CTRL_CLOSE_EVENT, etc.)
+ * @return TRUE se il segnale è stato gestito, FALSE altrimenti
+ * 
+ * @note Imposta server_running=0 per avviare la procedura di shutdown
+ * @note Chiama network_shutdown() per interrompere immediatamente l'accettazione di nuove connessioni
+ */
 BOOL WINAPI ConsoleHandler(DWORD signal) {
     if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT) {
         printf("\nRicevuto segnale di chiusura, spegnimento server...\n");
@@ -36,12 +47,29 @@ BOOL WINAPI ConsoleHandler(DWORD signal) {
     return FALSE;
 }
 
+/**
+ * Configura i gestori di segnale per Windows.
+ * Installa il gestore per eventi di console utilizzando SetConsoleCtrlHandler.
+ * 
+ * @note Stampa un errore se l'installazione del gestore fallisce
+ * @note Il gestore viene impostato per gestire tutti gli eventi di chiusura console
+ */
 void setup_signal_handlers() {
     if (!SetConsoleCtrlHandler(ConsoleHandler, TRUE)) {
         printf("Errore impostazione gestore segnali: %lu\n", GetLastError());
     }
 }
 #else
+/**
+ * Gestore dei segnali Unix per shutdown controllato del server.
+ * Gestisce SIGINT e SIGTERM per permettere chiusura pulita delle risorse.
+ * 
+ * @param sig Numero del segnale ricevuto
+ * 
+ * @note Previene shutdown multipli con flag statico
+ * @note Il secondo segnale forza l'uscita immediata
+ * @note Imposta server_running=0 per terminazione controllata del main loop
+ */
 void signal_handler(int sig) {
     static int shutdown_in_progress = 0;
     
@@ -57,6 +85,13 @@ void signal_handler(int sig) {
     // Non chiamare network_shutdown qui - lascia che il main loop lo faccia
 }
 
+/**
+ * Configura i gestori di segnale per il sistema Unix.
+ * Imposta gestori per SIGINT, SIGTERM e ignora SIGPIPE.
+ * 
+ * @note SIGPIPE viene ignorato per evitare crash quando i client si disconnettono
+ * @note I segnali SIGINT e SIGTERM attivano la procedura di shutdown controllato
+ */
 void setup_signal_handlers() {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -64,6 +99,21 @@ void setup_signal_handlers() {
 }
 #endif
 
+/**
+ * Funzione principale del server Tris multiplayer.
+ * Inizializza tutti i componenti del server, avvia l'ascolto per connessioni client
+ * e gestisce il loop principale di accettazione connessioni con threading.
+ * 
+ * @return 0 se l'esecuzione è completata con successo, 1 in caso di errore
+ * 
+ * @note Inizializza nell'ordine: rete, lobby, game manager, ascolto
+ * @note Usa select() con timeout per rendere l'accept non-bloccante e controllare server_running
+ * @note Ogni client viene gestito in un thread separato (Windows: CreateThread, Unix: pthread)
+ * @note Include controllo di lobby piena per rifiutare connessioni eccedenti
+ * @note Gestisce graceful shutdown tramite signal handler cross-platform
+ * @note Pulisce automaticamente tutte le risorse prima della terminazione
+ * @note Supporta fino a MAX_CLIENTS connessioni simultanee
+ */
 int main() {
 #ifdef _WIN32
     printf("=== TRIS SERVER (Windows) ===\n");

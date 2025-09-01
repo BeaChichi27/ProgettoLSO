@@ -2,6 +2,16 @@
 #include <stdio.h>
 #include <string.h>
 
+/**
+ * Inizializza una nuova struttura di gioco con valori di default.
+ * Imposta la griglia vuota, il primo giocatore e lo stato iniziale.
+ * 
+ * @param game Puntatore alla struttura Game da inizializzare
+ * 
+ * @note La griglia viene riempita con PLAYER_NONE (spazi vuoti)
+ * @note Il giocatore iniziale è sempre PLAYER_X
+ * @note Lo stato iniziale è GAME_STATE_WAITING
+ */
 void game_init(Game *game) {
     memset(game, 0, sizeof(Game));
     
@@ -17,6 +27,15 @@ void game_init(Game *game) {
     game->is_draw = 0;
 }
 
+/**
+ * Reinizializza solo la griglia di gioco mantenendo lo stato della partita.
+ * Utilizzata per preparare una nuova partita mantenendo le impostazioni.
+ * 
+ * @param game Puntatore alla struttura Game da reinizializzare
+ * 
+ * @note Resetta solo il board, non tocca stato, giocatori o altre impostazioni
+ * @note Utile per i rematch dove si mantiene la configurazione esistente
+ */
 void game_init_board(Game *game) {
     for (int i = 0; i < BOARD_SIZE; i++) {
         for (int j = 0; j < BOARD_SIZE; j++) {
@@ -25,6 +44,19 @@ void game_init_board(Game *game) {
     }
 }
 
+/**
+ * Esegue una mossa nel gioco dopo averla validata.
+ * Piazza il simbolo del giocatore corrente, controlla la vittoria e cambia turno.
+ * 
+ * @param game Puntatore alla struttura Game
+ * @param row Riga della mossa (0-2)
+ * @param col Colonna della mossa (0-2)
+ * @return 1 se la mossa è stata eseguita con successo, 0 se non valida
+ * 
+ * @note Valida automaticamente la mossa prima di eseguirla
+ * @note Controlla condizioni di vittoria/pareggio dopo ogni mossa
+ * @note Cambia automaticamente il turno se il gioco continua
+ */
 int game_make_move(Game *game, int row, int col) {
     if (!game_is_valid_move(game, row, col)) {
         return 0;
@@ -41,6 +73,18 @@ int game_make_move(Game *game, int row, int col) {
     return 1;
 }
 
+/**
+ * Verifica se una mossa è valida nella posizione specificata.
+ * Controlla che le coordinate siano nel range e che la cella sia vuota.
+ * 
+ * @param game Puntatore alla struttura Game (sola lettura)
+ * @param row Riga da verificare (0-2)
+ * @param col Colonna da verificare (0-2)
+ * @return 1 se la mossa è valida, 0 altrimenti
+ * 
+ * @note Non modifica lo stato del gioco, solo validazione
+ * @note Controlla i bounds della griglia 3x3
+ */
 int game_is_valid_move(const Game *game, int row, int col) {
     if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
         return 0;
@@ -49,6 +93,16 @@ int game_is_valid_move(const Game *game, int row, int col) {
     return (game->board[row][col] == PLAYER_NONE);
 }
 
+/**
+ * Controlla se c'è un vincitore o un pareggio e aggiorna lo stato del gioco.
+ * Verifica tutte le combinazioni possibili: righe, colonne e diagonali.
+ * 
+ * @param game Puntatore alla struttura Game da controllare
+ * 
+ * @note Controlla prima le righe, poi le colonne, infine le diagonali
+ * @note Se non c'è vincitore ma il tabellone è pieno, dichiara pareggio
+ * @note Aggiorna automaticamente lo stato del gioco a GAME_STATE_OVER se finita
+ */
 void game_check_winner(Game *game) {
     for (int i = 0; i < BOARD_SIZE; i++) {
         if (game->board[i][0] != PLAYER_NONE &&
@@ -92,11 +146,36 @@ void game_check_winner(Game *game) {
     }
 }
 
+/**
+ * Resetta completamente il gioco per iniziare una nuova partita.
+ * Reinizializza tutti i valori e imposta lo stato a GAME_STATE_PLAYING.
+ * 
+ * @param game Puntatore alla struttura Game da resettare
+ * 
+ * @note Chiama game_init() per azzerare tutto
+ * @note Imposta lo stato direttamente a GAME_STATE_PLAYING (partita attiva)
+ * @note Utilizzata per iniziare una nuova partita o un rematch
+ */
 void game_reset(Game *game) {
     game_init(game);
     game->state = GAME_STATE_PLAYING;
 }
 
+/**
+ * Stampa il tabellone di gioco in formato ASCII art nella console.
+ * Visualizza una griglia 3x3 con separatori grafici tra le celle.
+ * 
+ * @param game Puntatore alla struttura Game da visualizzare (sola lettura)
+ * 
+ * @note Formato di output:
+ *       X | O |   
+ *       -----------
+ *       O | X | X
+ *       -----------
+ *         | O |   
+ * @note Le celle vuote vengono mostrate come spazi
+ * @note Aggiunge righe vuote prima e dopo per migliorare la leggibilità
+ */
 void game_print_board(const Game *game) {
     printf("\n");
     for (int i = 0; i < BOARD_SIZE; i++) {
@@ -117,6 +196,17 @@ void game_print_board(const Game *game) {
     printf("\n");
 }
 
+/**
+ * Verifica se il tabellone di gioco è completamente pieno.
+ * Controlla tutte le celle per determinare se ci sono ancora mosse possibili.
+ * 
+ * @param game Puntatore alla struttura Game da controllare (sola lettura)
+ * @return 1 se il tabellone è pieno (nessuna cella vuota), 0 altrimenti
+ * 
+ * @note Utilizzata per determinare condizioni di pareggio
+ * @note Scorre tutte le 9 celle del tabellone 3x3
+ * @note Ritorna 0 appena trova la prima cella vuota (ottimizzazione)
+ */
 int game_is_board_full(const Game *game) {
     for (int i = 0; i < BOARD_SIZE; i++) {
         for (int j = 0; j < BOARD_SIZE; j++) {
@@ -125,32 +215,48 @@ int game_is_board_full(const Game *game) {
             }
         }
     }
+   
     return 1;
 }
 
-// Sostituisci la funzione game_process_network_message in game_logic.c
-
+/**
+ * Elabora un messaggio ricevuto dalla rete e aggiorna lo stato del gioco.
+ * Gestisce diversi tipi di messaggi: mosse, reset, rematch e fine partita.
+ * 
+ * @param game Puntatore alla struttura Game da aggiornare
+ * @param message Messaggio ricevuto dal server da elaborare
+ * @return 1 se il messaggio è stato elaborato con successo, 0 altrimenti
+ * 
+ * @note Tipi di messaggi supportati:
+ *       - "MOVE:row,col:symbol" - Mossa dell'avversario
+ *       - "GAME_RESET" o "RESET" - Reset della partita
+ *       - "REMATCH" - Richiesta di rematch
+ *       - "GAME_OVER:WINNER:X/O" - Fine partita con vincitore
+ *       - "GAME_OVER:DRAW" - Fine partita con pareggio
+ * @note Stampa messaggi di debug per tracciare l'elaborazione
+ * @note Aggiorna automaticamente il turno dopo le mosse valide
+ */
 int game_process_network_message(Game *game, const char *message) {
     if (!game || !message) return 0;
 
     printf("Processando messaggio: %s\n", message);
 
     if (strncmp(message, "MOVE:", 5) == 0) {
-        // Formato: "MOVE:<row>,<col>:<symbol>"
+        
         int row, col;
         char symbol;
         if (sscanf(message + 5, "%d,%d:%c", &row, &col, &symbol) == 3) {
             printf("Mossa estratta: riga=%d, col=%d, simbolo=%c\n", row, col, symbol);
             
             if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
-                // Aggiorna il board
+                
                 game->board[row][col] = symbol;
                 printf("Board aggiornato alla posizione [%d][%d] = %c\n", row, col, symbol);
                 
-                // Controlla vincitore
+                
                 game_check_winner(game);
                 
-                // Cambia turno solo se il gioco continua
+                
                 if (game->state == GAME_STATE_PLAYING) {
                     game->current_player = (game->current_player == PLAYER_X) ? PLAYER_O : PLAYER_X;
                     printf("Turno cambiato. Ora tocca a: %c\n", game->current_player);
