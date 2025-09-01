@@ -41,61 +41,6 @@ services:
     stdin_open: true    # Necessario per l'input interattivo
     tty: true          # Necessario per l'output colorato
     profiles: ["client"]  # Non avviato di default
-    
-  # Client predefiniti per demo
-  client-alice:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-    container_name: client-alice
-    depends_on:
-      tris-server:
-        condition: service_healthy
-    environment:
-      - SERVER_HOST=tris-server
-      - SERVER_PORT=${PORT:-8080}
-      - CLIENT_NAME=Alice
-    networks:
-      - tris-network
-    stdin_open: true
-    tty: true
-    profiles: ["demo"]
-
-  client-bob:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-    container_name: client-bob
-    depends_on:
-      tris-server:
-        condition: service_healthy
-    environment:
-      - SERVER_HOST=tris-server
-      - SERVER_PORT=${PORT:-8080}
-      - CLIENT_NAME=Bob
-    networks:
-      - tris-network
-    stdin_open: true
-    tty: true
-    profiles: ["demo"]
-
-  client-charlie:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-    container_name: client-charlie
-    depends_on:
-      tris-server:
-        condition: service_healthy
-    environment:
-      - SERVER_HOST=tris-server
-      - SERVER_PORT=${PORT:-8080}
-      - CLIENT_NAME=Charlie
-    networks:
-      - tris-network
-    stdin_open: true
-    tty: true
-    profiles: ["demo"]
 
 networks:
   tris-network:

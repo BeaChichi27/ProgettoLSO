@@ -13,11 +13,13 @@ ProgettoLSO/
 │   │   ├── lobby.c             # Client lobby management
 │   │   ├── game_manager.c      # Game logic and state management
 │   │   └── headers/
-│   │       ├── network.h
-│   │       ├── lobby.h
-│   │       └── game_manager.h
-│   ├── Dockerfile
-│   └── Makefile
+│   │       ├── network.h       # Network function declarations
+│   │       ├── lobby.h         # Lobby management declarations
+│   │       └── game_manager.h  # Game management declarations
+│   ├── .dockerignore
+│   ├── Dockerfile              # Server container configuration
+│   ├── Makefile                # Server build configuration
+│   └── server                  # Compiled server executable
 ├── client/
 │   ├── src/
 │   │   ├── main.c              # Client main and UI
@@ -25,17 +27,23 @@ ProgettoLSO/
 │   │   ├── game_logic.c        # Game state and validation
 │   │   ├── ui.c                # User interface functions
 │   │   └── headers/
-│   │       ├── network.h
-│   │       ├── game_logic.h
-│   │       └── ui.h
-│   ├── Dockerfile
-│   └── Makefile
+│   │       ├── network.h       # Network function declarations
+│   │       ├── game_logic.h    # Game logic declarations
+│   │       └── ui.h            # UI function declarations
+│   ├── .dockerignore
+│   ├── Dockerfile              # Client container configuration
+│   ├── Makefile                # Client build configuration
+│   └── client                  # Compiled client executable
+├── .env                        # Environment variables
+├── .gitignore                  # Git ignore rules
+├── .vscode/                    # VS Code configuration
 ├── docker-compose.yml          # Multi-container orchestration
 ├── Mac.sh                      # macOS launcher script
 ├── Unix.sh                     # Linux launcher script
+├── run.sh                      # Universal Unix launcher script
 ├── runWin.ps1                  # Windows PowerShell script
 ├── Windows.bat                 # Windows batch launcher
-└── tris-manager.sh             # Advanced management script
+└── README.md                   # This documentation file
 ```
 
 ## Features
@@ -105,18 +113,6 @@ ProgettoLSO/
 3. **Enter number of clients** when prompted (1-20 recommended)
 4. **Each client opens** in a separate terminal window automatically
 5. **Start playing!** Register names and create/join games
-
-### Alternative Manual Start
-```bash
-# Start server only
-docker-compose up tris-server
-
-# Start server + 3 clients
-docker-compose --profile client up --scale tris-client=3
-
-# Start predefined demo (Alice, Bob, Charlie)
-docker-compose --profile demo up
-```
 
 ## How to Play
 
@@ -194,31 +190,6 @@ ERROR:Message           - Error occurred with description
 - **Game Logic**: Local game state validation and display
 - **UI Module**: Terminal-based user interface with game board rendering
 
-### Data Structures
-```c
-// Game representation
-typedef struct {
-    int game_id;
-    Client* player1;     // Creator (initially X)
-    Client* player2;     // Joiner (initially O)
-    char board[3][3];    // 3x3 game board
-    PlayerSymbol current_player;  // X or O
-    GameState state;     // Current game state
-    PlayerSymbol winner; // Winner symbol or NONE
-    int is_draw;         // Draw flag
-    // ... additional fields
-} Game;
-
-// Client representation
-typedef struct {
-    socket_t client_fd;
-    char name[MAX_NAME_LEN];
-    int game_id;
-    int is_active;
-    // ... thread and network fields
-} Client;
-```
-
 ## Development
 
 ### Manual Compilation
@@ -237,171 +208,33 @@ make clean && make
 ./client
 ```
 
-### Docker Development
-```bash
-# Build and run all services
-docker-compose up --build
-
-# View logs
-docker-compose logs tris-server
-docker-compose logs tris-client
-
-# Scale clients
-docker-compose --profile client up --scale tris-client=5
-
-# Clean rebuild
-docker-compose down --rmi all
-docker-compose up --build
-```
-
-### Advanced Management
-```bash
-# Use the management script
-./tris-manager.sh start-server    # Server only
-./tris-manager.sh start-demo      # Server + 3 demo clients  
-./tris-manager.sh scale-clients 10  # Server + 10 clients
-./tris-manager.sh stop            # Stop all
-./tris-manager.sh clean           # Clean everything
-```
-
 ## Configuration
 
 ### Environment Variables (.env)
-```bash
-PORT=8080                    # Server port
-EXTERNAL_PORT=8080           # Host port mapping
-MAX_CLIENTS=100             # Maximum concurrent clients
-DEBUG=1                     # Enable debug output
-CLIENT_NAME=Player          # Default client name
+```properties
+# Configurazione server
+PORT=8080                       # Server port
+EXTERNAL_PORT=8080              # Host port mapping
+MAX_CLIENTS=100                 # Maximum concurrent clients
+DEBUG=1                         # Enable debug output
+
+# Configurazioni client
+CLIENT_NAME=Player              # Default client name
+
+# Compose project name
+COMPOSE_PROJECT_NAME=tris-game  # Docker Compose project name
 ```
 
 ### Network Configuration
-- **Server Port**: 8080 (configurable)
-- **Docker Network**: `tris-network` (172.20.0.0/16)
+- **Server Port**: 8080 (configurable via .env)
+- **Docker Network**: Managed by Docker Compose
 - **Container Communication**: Service name resolution
 - **External Access**: `localhost:8080`
-
-## Troubleshooting
-
-### Common Issues
-
-**Server won't start:**
-```bash
-# Check port availability
-netstat -tulpn | grep :8080
-
-# View server logs
-docker-compose logs tris-server
-
-# Restart server
-docker-compose restart tris-server
-```
-
-**Client connection failed:**
-```bash
-# Verify server is running
-docker-compose ps
-
-# Check network connectivity
-docker exec -it lso-tris-client-1 ping tris-server
-
-# View client logs
-docker-compose logs tris-client
-```
-
-**Docker issues:**
-```bash
-# Clean restart
-docker-compose down
-docker system prune -f
-docker-compose up --build
-
-# Reset everything
-docker-compose down --rmi all --volumes
-```
-
-## Testing
-
-### Functional Testing
-1. **Single Client**: Create game, wait for opponent
-2. **Two Clients**: Join request/approval flow
-3. **Gameplay**: Full game with moves, win detection
-4. **Rematch**: Role switching (X↔O) functionality  
-5. **Disconnection**: Graceful handling of client drops
-6. **Concurrent Games**: Multiple simultaneous games
-
-### Stress Testing
-```bash
-# Test with many clients
-./tris-manager.sh scale-clients 20
-
-# Monitor system resources
-docker stats
-
-# Check connection limits
-netstat -an | grep :8080 | wc -l
-```
-
-## Contributing
-
-### Code Style
-- **C99 Standard** compliance
-- **Consistent indentation** (4 spaces)
-- **Descriptive variable names**
-- **Function documentation**
-- **Error handling** for all operations
-
-### Git Workflow
-```bash
-git checkout -b feature/new-feature
-# Make changes
-git add .
-git commit -m "Add: new feature description"
-git push origin feature/new-feature
-# Create pull request
-```
-
-## License
-
-This project is developed for educational purposes as part of the LSO (Laboratorio di Sistemi Operativi) course.
 
 ## Authors
 
 - **BeaChichi27** - Initial development and architecture
 - Repository: [ProgettoLSO](https://github.com/BeaChichi27/ProgettoLSO)
-
----
-
-**🎮 Ready to play? Choose your script and start the Tris battle!**
-- **Problema risolto**: "Il creatore di una partita può accettare o rifiutare la richiesta di partecipazione"
-- **Implementazione**:
-  - Quando un giocatore tenta di unirsi (`JOIN:ID`), viene messo in stato `PENDING_APPROVAL`
-  - Il creatore riceve un messaggio `JOIN_REQUEST:NOME:ID`
-  - Il creatore può rispondere con `APPROVE:1` (accetta) o `APPROVE:0` (rifiuta)
-  - Solo dopo l'approvazione la partita inizia
-
-#### 2. Messaggi Differenziati per Stato
-- **Problema risolto**: "Messaggi diversi in base allo stato di gioco"
-- **Implementazione**:
-  - `WAITING`: "In attesa di giocatori"
-  - `PENDING_APPROVAL`: "Richiesta di NOME in attesa"
-  - `PLAYING`: "NOME vs NOME (In corso)"
-  - `REMATCH_REQUESTED`: "NOME vs NOME (Rematch richiesto)"
-
-#### 3. Broadcast Automatico delle Partite
-- **Problema risolto**: "Invito a partecipare per partite in attesa"
-- **Implementazione**:
-  - Quando viene creata una nuova partita, viene inviata la lista aggiornata a tutti i client liberi
-  - La lista mostra lo stato di ogni partita in tempo reale
-  - I client vengono notificati automaticamente delle nuove opportunità
-
-#### 4. Sistema Rematch Completo
-- **Problema risolto**: "Scegliere se iniziare un'altra partita"
-- **Implementazione**:
-  - A fine partita, ogni giocatore può richiedere `REMATCH`
-  - Il sistema aspetta che entrambi i giocatori accettino
-  - Solo quando entrambi hanno accettato, inizia una nuova partita
-  - Gestione dei rifiuti e delle richieste unilaterali
 
 ## Messaggi di Protocollo
 
@@ -431,25 +264,6 @@ REMATCH_ACCEPTED:msg               - Rematch accettato da entrambi
 GAMES:lista                        - Lista partite con stati
 ```
 
-## Come Testare le Nuove Funzionalità
-
-### Test 1: Sistema di Approvazione
-1. Avvia server: `./server`
-2. Avvia Client 1, crea partita: `CREATE_GAME`
-3. Avvia Client 2, unisciti: `JOIN:1`
-4. Client 1 riceve richiesta, può accettare (s) o rifiutare (n)
-5. Solo se accettato, la partita inizia
-
-### Test 2: Broadcast Automatico  
-1. Avvia più client
-2. Crea partite da diversi client
-3. Ogni client libero riceverà automaticamente la lista aggiornata
-
-### Test 3: Sistema Rematch
-1. Completa una partita
-2. Entrambi i client ricevono la richiesta di rematch
-3. Solo se entrambi accettano, inizia una nuova partita
-
 ## Compilazione e Avvio
 
 ### Server
@@ -467,38 +281,20 @@ make clean && make
 ./client.exe  # Windows
 ```
 
-### Docker Compose
-```bash
-docker-compose up --build
-```
+## Architecture
 
-## Conformità alla Traccia
+### Server Components
+- **`main.c`** - Server entry point, connection handling, signal management
+- **`network.c`** - TCP/UDP communication, client threads, protocol handling  
+- **`lobby.c`** - Client registration, game listing, message routing
+- **`game_manager.c`** - Game logic, state management, move validation
 
-Il progetto ora rispetta **100%** delle specifiche richieste:
+### Client Components  
+- **`main.c`** - Client entry point, user interface, game flow
+- **`network.c`** - Server communication, connection management
+- **`game_logic.c`** - Local game state, move validation, win detection
+- **`ui.c`** - Terminal interface, board display, user input
 
-- ✅ Server C, Client C, comunicazione Socket
-- ✅ Docker-compose per deployment  
-- ✅ Server multi-client con thread
-- ✅ Due giocatori per partita
-- ✅ **Approvazione/rifiuto richieste join**
-- ✅ **Messaggi differenziati per stato**
-- ✅ **Broadcast automatico partite disponibili**
-- ✅ **Sistema rematch completo**
-- ✅ Stati di gioco: terminata, in corso, in attesa, nuova creazione
-- ✅ Stati di terminazione: vittoria, sconfitta, pareggio
-- ✅ ID univoci per partite
-- ✅ Possibilità di giocare più partite
+## Code Documentation
 
-## Architettura
-
-### Server
-- `main.c`: Gestione connessioni e thread
-- `network.c`: Comunicazione TCP/UDP
-- `lobby.c`: Gestione client e messaggi
-- `game_manager.c`: Logica partite e stati
-
-### Client  
-- `main.c`: Loop principale e interazione utente
-- `network.c`: Comunicazione con server
-- `game_logic.c`: Logica locale del gioco
-- `ui.c`: Interfaccia utente
+All source files (.c) include comprehensive **Javadoc-style documentation**:
